@@ -122,11 +122,18 @@ def get_thumbnail(video_id: int, shot_index: int, db: Session = Depends(get_db))
     p = Path(shot.thumbnail_path)
     if not p.exists():
         raise HTTPException(404, "缩略图文件不存在")
-    return FileResponse(str(p), media_type="image/jpeg")
+
+    # 添加缓存头
+    headers = {
+        'Cache-Control': 'public, max-age=2592000',  # 30天
+        'ETag': f'"{shot.id}-{p.stat().st_mtime}"'
+    }
+    return FileResponse(str(p), media_type="image/jpeg", headers=headers)
 
 
 @router.get("/clip/{video_id}/{shot_index}")
-def get_clip(video_id: int, shot_index: int, db: Session = Depends(get_db)):
+def get_clip(video_id: int, shot_index: int, request: Request, db: Session = Depends(get_db)):
+    """流式传输镜头切片，支持 Range 请求和缓存"""
     shot = (
         db.query(Shot)
         .filter(Shot.video_id == video_id, Shot.index == shot_index)
@@ -137,7 +144,51 @@ def get_clip(video_id: int, shot_index: int, db: Session = Depends(get_db)):
     p = Path(shot.clip_path)
     if not p.exists():
         raise HTTPException(404, "视频片段文件不存在")
-    return FileResponse(str(p), media_type="video/mp4")
+
+    # 添加缓存头
+    headers = {
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=604800',  # 7天
+        'ETag': f'"{shot.id}-{p.stat().st_mtime}"'
+    }
+
+    # 支持 Range 请求（复用 stream_video 的逻辑）
+    range_header = request.headers.get('range')
+    if range_header:
+        import re
+        file_size = p.stat().st_size
+        match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+        if match:
+            start = int(match.group(1))
+            end = int(match.group(2)) if match.group(2) else file_size - 1
+            end = min(end, file_size - 1)
+
+            def iter_file():
+                with open(p, 'rb') as f:
+                    f.seek(start)
+                    remaining = end - start + 1
+                    chunk_size = 1024 * 1024  # 1MB chunks
+                    while remaining > 0:
+                        chunk = f.read(min(chunk_size, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                        yield chunk
+
+            headers.update({
+                'Content-Range': f'bytes {start}-{end}/{file_size}',
+                'Content-Length': str(end - start + 1),
+            })
+
+            return StreamingResponse(
+                iter_file(),
+                status_code=206,
+                media_type="video/mp4",
+                headers=headers
+            )
+
+    # 完整文件响应
+    return FileResponse(str(p), media_type="video/mp4", headers=headers)
 
 
 @router.get("/video-thumbnail/{video_id}")
@@ -161,4 +212,9 @@ def get_video_thumbnail(video_id: int, db: Session = Depends(get_db)):
         except Exception as e:
             raise HTTPException(404, f"无法提取封面: {e}")
 
-    return FileResponse(str(thumb_path), media_type="image/jpeg")
+    # 添加缓存头
+    headers = {
+        'Cache-Control': 'public, max-age=2592000',  # 30天
+        'ETag': f'"{video_id}-{thumb_path.stat().st_mtime}"'
+    }
+    return FileResponse(str(thumb_path), media_type="image/jpeg", headers=headers)
