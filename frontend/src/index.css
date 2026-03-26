@@ -1,0 +1,27 @@
+/* Ant Design CSS layer — 防止与 Tailwind 冲突 */
+@layer reset, base, antd;
+
+@import "tailwindcss";
+
+:root {
+  font-family: 'PingFang SC', 'Microsoft YaHei', Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  background-color: #0f0f14;
+  color: #e5e7eb;
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track { background: #1a1a2e; }
+::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 3px; }

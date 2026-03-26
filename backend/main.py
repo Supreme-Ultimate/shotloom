@@ -1,0 +1,58 @@
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+import time
+
+from database import init_db
+from routers import upload, analysis, results, export
+from routers import auth_router, wechat, admin, credits
+from logger import app_logger
+
+app = FastAPI(title="视频拉片工具", version="2.0.0")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """记录所有 HTTP 请求"""
+    start_time = time.time()
+    app_logger.info(f"请求开始: {request.method} {request.url.path}")
+
+    response = await call_next(request)
+
+    duration = time.time() - start_time
+    app_logger.info(f"请求完成: {request.method} {request.url.path} | 状态码={response.status_code} | 耗时={duration:.3f}s")
+
+    return response
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 原有路由
+app.include_router(upload.router)
+app.include_router(analysis.router)
+app.include_router(results.router)
+app.include_router(export.router)
+
+# 新增路由
+app.include_router(auth_router.router)
+app.include_router(wechat.router)
+app.include_router(admin.router)
+app.include_router(credits.router)
+
+
+@app.on_event("startup")
+def startup():
+    app_logger.info("应用启动中...")
+    init_db()
+    app_logger.info("数据库初始化完成")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
