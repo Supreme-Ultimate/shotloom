@@ -333,8 +333,9 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
 
         # 镜头分析完成，不自动执行整体分析
         video.status = "completed"
-        video.current_task_id = None  # 清除任务 ID
-        db.commit()
+        video.current_task_id = None
+        db.commit()  # 先提交视频状态
+        app_logger.info(f"视频状态已更新为 completed: video_id={video_id}")
 
         # 按实际镜头数扣除积分
         if user_id:
@@ -344,8 +345,13 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             except Exception as e:
                 app_logger.error(f"积分扣除失败: user_id={user_id} | 错误: {e}")
 
+        # 确保所有数据库操作完成后再发送完成消息
+        db.commit()  # 再次提交，确保积分扣除也已保存
+        app_logger.info(f"所有数据库操作已完成: video_id={video_id}")
+
+        # 最后发送 SSE 完成消息
         _task_progress[task_id] = {"stage": "completed", "done": total, "total": total}
-        app_logger.info(f"分析任务完成: video_id={video_id}, task_id={task_id}")
+        app_logger.info(f"分析任务完成，已发送 SSE 完成消息: video_id={video_id}, task_id={task_id}")
 
     except Exception as e:
         app_logger.error(f"分析任务失败: video_id={video_id}, task_id={task_id} | 错误: {e}")
