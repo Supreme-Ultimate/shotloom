@@ -308,6 +308,7 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
         # --- 逐镜 AI 分析 ---
         _task_progress[task_id] = {"stage": "analyzing", "done": 0, "total": total}
         done = 0
+        progress_lock = asyncio.Lock()
 
         async def analyze_one(shot):
             nonlocal done
@@ -324,8 +325,10 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                 shot.analysis = result
             except Exception as e:
                 shot.analysis = {"error": str(e)}
-            done += 1
-            _task_progress[task_id] = {"stage": "analyzing", "done": done, "total": total}
+            async with progress_lock:
+                done += 1
+                _task_progress[task_id] = {"stage": "analyzing", "done": done, "total": total}
+                app_logger.info(f"镜头分析完成: shot={shot.index}, done={done}/{total}")
             db.commit()
 
         # 并发执行（Semaphore 在 ai_analyzer 内控制）
