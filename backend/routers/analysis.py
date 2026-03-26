@@ -213,6 +213,7 @@ async def start_analysis(
 
     task_id = f"task_{video_id}"
     _task_progress[task_id] = {"stage": "starting", "done": 0, "total": len(shots_to_analyze)}
+    app_logger.info(f"[进度初始化] task_id={task_id}, initial_progress={_task_progress[task_id]}")
 
     video.status = "analyzing"
     video.current_task_id = task_id  # 保存任务 ID
@@ -243,14 +244,28 @@ def get_task_status(video_id: int, db: Session = Depends(get_db)):
 @router.get("/progress/{task_id}")
 async def progress_stream(task_id: str):
     """SSE 进度流"""
+    app_logger.info(f"[SSE 连接] 客户端连接: task_id={task_id}, 当前所有任务: {list(_task_progress.keys())}")
+
     async def event_generator():
+        iteration = 0
         while True:
+            iteration += 1
             prog = _task_progress.get(task_id)
             if prog is None:
+                app_logger.warning(f"[SSE 错误] 任务不存在: task_id={task_id}, 当前任务列表: {list(_task_progress.keys())}")
                 yield f"data: {json.dumps({'stage': 'not_found'})}\n\n"
                 break
-            yield f"data: {json.dumps(prog, ensure_ascii=False)}\n\n"
+
+            # 详细记录发送的数据
+            app_logger.info(f"[SSE 发送] 迭代 #{iteration}, task_id={task_id}, stage={prog.get('stage')}, done={prog.get('done')}, total={prog.get('total')}, 完整数据={prog}")
+
+            json_data = json.dumps(prog, ensure_ascii=False)
+            app_logger.info(f"[SSE JSON] 序列化后的数据: {json_data}")
+
+            yield f"data: {json_data}\n\n"
+
             if prog.get("stage") in ("completed", "error"):
+                app_logger.info(f"[SSE 结束] 任务结束: task_id={task_id}, stage={prog.get('stage')}, done={prog.get('done')}, total={prog.get('total')}")
                 break
             await asyncio.sleep(1)
 
@@ -280,7 +295,7 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
 
         # --- 切割镜头片段（仅切割需要分析的镜头）---
         _task_progress[task_id] = {"stage": "cutting_clips", "done": 0, "total": total}
-        app_logger.info(f"开始切割镜头: video_id={video_id}, total={total}")
+        app_logger.info(f"[进度更新] 开始切割镜头: video_id={video_id}, total={total}, task_id={task_id}, progress={_task_progress[task_id]}")
 
         from services.shot_detector import ShotBoundary
 
@@ -307,11 +322,14 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
 
         # --- 逐镜 AI 分析 ---
         _task_progress[task_id] = {"stage": "analyzing", "done": 0, "total": total}
-        done = 0
+        app_logger.info(f"[进度更新] 开始 AI 分析: video_id={video_id}, total={total}, task_id={task_id}, progress={_task_progress[task_id]}")
+
+        # 使用字典而不是简单变量，避免 nonlocal 的问题
+        progress_state = {"done": 0}
         progress_lock = asyncio.Lock()
 
         async def analyze_one(shot):
-            nonlocal done
+            app_logger.info(f"[分析开始] 镜头 {shot.index} 开始分析")
             try:
                 result = await analyze_shot(
                     clip_path=shot.clip_path,
@@ -323,16 +341,29 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                     end_time=shot.end_time,
                 )
                 shot.analysis = result
+                app_logger.info(f"[分析成功] 镜头 {shot.index} 分析成功")
             except Exception as e:
                 shot.analysis = {"error": str(e)}
+                app_logger.error(f"[分析失败] 镜头 {shot.index} 分析失败: {e}")
+
+            # 先提交数据库
+            try:
+                db.commit()
+                app_logger.info(f"[数据库提交] 镜头 {shot.index} 数据已保存")
+            except Exception as e:
+                app_logger.error(f"[数据库错误] 镜头 {shot.index} 提交失败: {e}")
+
+            # 更新进度（使用字典确保正确更新）
             async with progress_lock:
-                done += 1
-                _task_progress[task_id] = {"stage": "analyzing", "done": done, "total": total}
-                app_logger.info(f"镜头分析完成: shot={shot.index}, done={done}/{total}")
-            db.commit()
+                progress_state["done"] += 1
+                current_done = progress_state["done"]
+                _task_progress[task_id] = {"stage": "analyzing", "done": current_done, "total": total}
+                app_logger.info(f"[进度更新] 镜头 {shot.index} 完成，进度: {current_done}/{total}, task_id={task_id}, _task_progress={_task_progress[task_id]}")
 
         # 并发执行（Semaphore 在 ai_analyzer 内控制）
+        app_logger.info(f"[并发执行] 开始并发分析 {len(shots_to_analyze)} 个镜头")
         await asyncio.gather(*[analyze_one(s) for s in shots_to_analyze])
+        app_logger.info(f"[并发完成] 所有镜头分析完成，最终进度: {progress_state['done']}/{total}")
 
         # 镜头分析完成，不自动执行整体分析
         video.status = "completed"
@@ -354,7 +385,7 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
 
         # 最后发送 SSE 完成消息
         _task_progress[task_id] = {"stage": "completed", "done": total, "total": total}
-        app_logger.info(f"分析任务完成，已发送 SSE 完成消息: video_id={video_id}, task_id={task_id}")
+        app_logger.info(f"[进度更新] 分析任务完成: video_id={video_id}, task_id={task_id}, final_progress={_task_progress[task_id]}")
 
     except Exception as e:
         app_logger.error(f"分析任务失败: video_id={video_id}, task_id={task_id} | 错误: {e}")
