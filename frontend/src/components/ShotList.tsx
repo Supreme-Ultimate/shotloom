@@ -1,4 +1,5 @@
 import { Shot } from '../types/analysis'
+import { API_BASE_URL } from '../config'
 
 interface Props {
   shots: Shot[]
@@ -143,7 +144,7 @@ export default function ShotList({ shots, selectedIndex, onSelect, currentTime =
               >
                 {shot.thumbnail_path ? (
                   <img
-                    src={`/api/thumbnail/${videoId}/${shot.index}`}
+                    src={`${API_BASE_URL}/api/thumbnail/${videoId}/${shot.index}`}
                     alt={`Shot ${shot.index + 1}`}
                     onError={(e) => {
                       const img = e.target as HTMLImageElement

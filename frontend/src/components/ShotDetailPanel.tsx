@@ -1,4 +1,5 @@
 import { Shot } from '../types/analysis'
+import { API_BASE_URL } from '../config'
 
 interface Props {
   shot: Shot | null
@@ -63,7 +64,7 @@ export default function ShotDetailPanel({ shot, videoId }: Props) {
       {/* 缩略图 */}
       {shot.thumbnail_path && (
         <img
-          src={`/api/thumbnail/${videoId}/${shot.index}`}
+          src={`${API_BASE_URL}/api/thumbnail/${videoId}/${shot.index}`}
           className="w-full rounded-lg mb-4 object-cover max-h-40"
           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
