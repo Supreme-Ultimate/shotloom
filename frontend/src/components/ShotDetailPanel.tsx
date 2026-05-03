@@ -71,9 +71,9 @@ export default function ShotDetailPanel({ shot, videoId }: Props) {
       )}
 
       {!a && (
-        <div className="text-gray-600 text-sm py-8 text-center">
-          <div className="text-2xl mb-2 animate-spin inline-block">⟳</div>
-          <p>等待 AI 分析中…</p>
+        <div className="text-gray-500 text-sm py-8 text-center">
+          <div className="text-2xl mb-2">⌁</div>
+          <p>请选中镜头进行 AI 分析</p>
         </div>
       )}
 

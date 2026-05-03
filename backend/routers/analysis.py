@@ -127,8 +127,9 @@ async def detect_shots_endpoint(
         db.commit()
         raise HTTPException(500, f"镜头检测失败: {e}")
 
-    # 删除旧镜头记录
+    # 重新检测会生成新的镜头边界；旧的单镜头分析和整体分析不再适用。
     db.query(Shot).filter(Shot.video_id == video_id).delete()
+    db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).delete()
 
     # 生成缩略图（不生成切片，切片在分析时生成）
     app_logger.info(f"开始生成缩略图: video_id={video_id}, shot_count={len(shots)}")
@@ -174,6 +175,7 @@ def adjust_shots(
     video = get_video_for_user(video_id, current_user, db)
 
     db.query(Shot).filter(Shot.video_id == video_id).delete()
+    db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).delete()
     for i, s in enumerate(body.shots):
         start = float(s["start_time"])
         end = float(s["end_time"])
