@@ -1,3 +1,5 @@
+import { SHOTLOOM_LOGO_URL } from '../config'
+
 interface BrandMarkProps {
   size?: 'sm' | 'md' | 'lg'
   showText?: boolean
@@ -17,7 +19,7 @@ export default function BrandMark({ size = 'md', showText = true, subtitle, clas
   return (
     <div className={`flex items-center ${size === 'lg' ? 'justify-center gap-4' : 'gap-3'} ${className}`}>
       <img
-        src="/shotloom.svg"
+        src={SHOTLOOM_LOGO_URL}
         alt="ShotLoom"
         className={`${classes.mark} shrink-0 rounded-[30%] shadow-[0_0_24px_rgba(216,162,74,0.24)]`}
       />

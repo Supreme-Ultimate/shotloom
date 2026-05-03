@@ -3,7 +3,7 @@
  * 统一管理 API 请求
  */
 import axios from 'axios'
-import { API_BASE_URL } from '../config'
+import { API_BASE_URL, LOGIN_URL } from '../config'
 
 // 创建 axios 实例
 const api = axios.create({
@@ -32,8 +32,8 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       // Cookie 过期或无效，跳转登录页
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+      if (window.location.pathname !== LOGIN_URL) {
+        window.location.href = LOGIN_URL
       }
     }
     return Promise.reject(error)

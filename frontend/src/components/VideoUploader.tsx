@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import api from '../utils/api'
 import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
 import BrandMark from './BrandMark'
+import { SHOTLOOM_LOGO_URL } from '../config'
 
 interface Props {
   onUploadComplete: (videoId: number) => void
@@ -60,7 +61,7 @@ export default function VideoUploader({ onUploadComplete }: Props) {
           ${dragging ? 'border-[#d8a24a] bg-[#2a2116]/50' : 'border-gray-600 hover:border-[#d8a24a] bg-[#16162a]'}`}
       >
         <input type="file" accept="video/*" className="hidden" onChange={onFileChange} />
-        <img src="/shotloom.svg" alt="" className="h-14 w-14 rounded-2xl opacity-90" />
+        <img src={SHOTLOOM_LOGO_URL} alt="" className="h-14 w-14 rounded-2xl opacity-90" />
         <p className="text-lg text-gray-300 font-medium">
           {uploading ? `上传中 ${progress}%` : '拖拽视频到这里，或点击选择'}
         </p>

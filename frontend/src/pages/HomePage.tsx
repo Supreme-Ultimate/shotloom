@@ -5,7 +5,7 @@ import CreditsDisplay from '../components/CreditsDisplay'
 import BrandMark from '../components/BrandMark'
 import { useAuth } from '../contexts/auth-context'
 import api from '../utils/api'
-import { API_BASE_URL } from '../config'
+import { API_BASE_URL, SHOTLOOM_LOGO_URL } from '../config'
 import { APP_VERSION } from '../config/version'
 import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
 
@@ -170,7 +170,7 @@ export default function HomePage() {
                   onChange={handleFileSelect}
                   disabled={uploading}
                 />
-                <img src="/shotloom.svg" alt="" className="h-12 w-12 rounded-2xl opacity-90" />
+                <img src={SHOTLOOM_LOGO_URL} alt="" className="h-12 w-12 rounded-2xl opacity-90" />
                 {uploading ? (
                   <>
                     <p className="text-sm text-gray-300 font-medium">上传中 {uploadProgress}%</p>
@@ -218,7 +218,7 @@ export default function HomePage() {
                             if (placeholder) placeholder.style.display = 'flex'
                           }}
                         />
-                        <img src="/shotloom.svg" alt="" className="hidden h-16 w-16 rounded-2xl opacity-25" />
+                        <img src={SHOTLOOM_LOGO_URL} alt="" className="hidden h-16 w-16 rounded-2xl opacity-25" />
                         <div className="absolute top-2 right-2 flex gap-2">
                           <Tag color={statusInfo.color} className="text-xs">
                             {statusInfo.label}

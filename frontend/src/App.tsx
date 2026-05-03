@@ -2,6 +2,7 @@ import { Suspense, lazy } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { useAuth } from './contexts/auth-context'
+import { APP_BASE_PATH } from './config'
 import './index.css'
 
 const HomePage = lazy(() => import('./pages/HomePage'))
@@ -32,7 +33,7 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={APP_BASE_PATH}>
       <AuthProvider>
         <Suspense fallback={<div className="flex items-center justify-center h-screen bg-[#0f0f14] text-gray-400">加载中…</div>}>
         <Routes>
