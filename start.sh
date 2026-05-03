@@ -27,6 +27,9 @@ echo "=== 启动前端 ==="
 cd frontend
 source ~/.nvm/nvm.sh 2>/dev/null || true
 nvm use 22 2>/dev/null || true
+if [ ! -d node_modules ]; then
+  npm install
+fi
 npm run dev &
 FRONTEND_PID=$!
 cd ..

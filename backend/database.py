@@ -1,13 +1,17 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-from config import DATABASE_URL
+from config import DATABASE_URL, DB_CONNECT_ARGS
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(DATABASE_URL, connect_args=DB_CONNECT_ARGS, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+def utcnow():
+    return datetime.now(timezone.utc)
 
 
 # ─── 用户表（fastapi-users 兼容，手动定义以避免额外依赖复杂性）─────────────────
@@ -23,7 +27,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 
 # ─── 积分余额表 ─────────────────────────────────────────────────────────────────
@@ -34,7 +38,7 @@ class Credits(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
     balance = Column(Integer, default=0, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 # ─── 积分流水表 ─────────────────────────────────────────────────────────────────
@@ -48,7 +52,7 @@ class CreditTransaction(Base):
     reason = Column(String, nullable=False)              # analysis | admin_reset | refund
     video_id = Column(Integer, ForeignKey("videos.id"), nullable=True)
     shot_count = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 
 # ─── 视频表 ─────────────────────────────────────────────────────────────────────
@@ -67,7 +71,7 @@ class Video(Base):
     status = Column(String, default="uploaded")  # uploaded | detecting | detected | analyzing | completed | error
     current_task_id = Column(String, nullable=True)  # 当前正在运行的任务 ID
     error_msg = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 
 # ─── 镜头表 ─────────────────────────────────────────────────────────────────────
@@ -103,7 +107,7 @@ class VideoAnalysis(Base):
     video_id = Column(Integer, nullable=False, unique=True, index=True)
     _continuity_report = Column("continuity_report", Text, nullable=True)
     _rhythm_report = Column("rhythm_report", Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     @property
     def continuity_report(self):
@@ -120,6 +124,32 @@ class VideoAnalysis(Base):
     @rhythm_report.setter
     def rhythm_report(self, value):
         self._rhythm_report = json.dumps(value, ensure_ascii=False) if value else None
+
+
+# ─── 分析任务表 ─────────────────────────────────────────────────────────────────
+
+class AnalysisTask(Base):
+    __tablename__ = "analysis_tasks"
+
+    id = Column(String, primary_key=True, index=True)
+    video_id = Column(Integer, ForeignKey("videos.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    stage = Column(String, default="queued", nullable=False)
+    done = Column(Integer, default=0, nullable=False)
+    total = Column(Integer, default=0, nullable=False)
+    message = Column(Text, nullable=True)
+    _shot_indices = Column("shot_indices", Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    finished_at = Column(DateTime, nullable=True)
+
+    @property
+    def shot_indices(self):
+        return json.loads(self._shot_indices) if self._shot_indices else None
+
+    @shot_indices.setter
+    def shot_indices(self, value):
+        self._shot_indices = json.dumps(value) if value is not None else None
 
 
 # ─── 初始化 ─────────────────────────────────────────────────────────────────────

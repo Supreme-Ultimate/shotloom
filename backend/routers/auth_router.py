@@ -1,12 +1,12 @@
 """
 认证路由：注册、登录、获取当前用户信息
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from database import get_db, User, Credits, CreditTransaction
-from auth import hash_password, verify_password, create_access_token, get_current_user
+from auth import clear_auth_cookie, create_access_token, get_current_user, hash_password, set_auth_cookie, verify_password
 from config import INITIAL_CREDITS
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -50,7 +50,7 @@ def _create_user_with_credits(db: Session, user: User) -> User:
 
 
 @router.post("/register", response_model=dict)
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
+def register(body: RegisterRequest, response: Response, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "该邮箱已注册")
     if len(body.password) < 6:
@@ -66,11 +66,12 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     )
     user = _create_user_with_credits(db, user)
     token = create_access_token(user.id)
+    set_auth_cookie(response, token)
     return {"access_token": token, "token_type": "bearer", "user_id": user.id}
 
 
 @router.post("/login", response_model=dict)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(body: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not user.hashed_password:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "邮箱或密码错误")
@@ -80,6 +81,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "账号已被禁用")
 
     token = create_access_token(user.id)
+    set_auth_cookie(response, token)
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -91,3 +93,9 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/logout")
+def logout(response: Response):
+    clear_auth_cookie(response)
+    return {"ok": True}

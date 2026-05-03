@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom'
 import { StyleProvider } from '@ant-design/cssinjs'
 import { ConfigProvider, Layout, Menu, theme } from 'antd'
-import { useAuth } from '../../contexts/AuthContext'
+import { useAuth } from '../../contexts/auth-context'
 
 const { Sider, Content } = Layout
 

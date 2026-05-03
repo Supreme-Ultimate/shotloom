@@ -25,6 +25,15 @@ export interface ShotAnalysis {
   content_description: string
   on_screen_text: string
   dialogue: string
+  audio?: {
+    dialogue?: string
+    sound_type?: string
+    music?: string
+    ambient_sound?: string
+    speaker_emotion?: string
+  }
+  audiovisual_sync?: string
+  audio_narrative_role?: string
   what: string
   how: string
   why: string
@@ -83,7 +92,7 @@ export interface AnalysisResult {
 }
 
 export interface TaskProgress {
-  stage: 'starting' | 'cutting_clips' | 'analyzing' | 'continuity' | 'completed' | 'error' | 'not_found'
+  stage: 'starting' | 'cutting_clips' | 'analyzing' | 'continuity' | 'completed' | 'error' | 'cancelled' | 'not_found'
   done?: number
   total?: number
   msg?: string

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ProTable } from '@ant-design/pro-components'
 import type { ActionType, ProColumns } from '@ant-design/pro-components'
 import { Button, InputNumber, Modal, Tag, message } from 'antd'
-import axios from 'axios'
+import api from '../../utils/api'
 
 interface UserRow {
   id: number
@@ -90,13 +90,13 @@ export default function AdminUsers() {
               setNewBalance(row.credits)
             }}
           >
-            重置积分
+            设置积分
           </Button>
           <Button
             size="small"
             danger={row.is_active}
             onClick={async () => {
-              await axios.patch(`/api/admin/users/${row.id}/status`)
+              await api.patch(`/api/admin/users/${row.id}/status`)
               actionRef.current?.reload()
             }}
           >
@@ -109,12 +109,12 @@ export default function AdminUsers() {
 
   const handleResetCredits = async () => {
     try {
-      await axios.post(`/api/admin/users/${resetModal.userId}/credits/reset`, { balance: newBalance })
-      message.success('积分已重置')
+      await api.post(`/api/admin/users/${resetModal.userId}/credits/reset`, { balance: newBalance })
+      message.success('积分已设置')
       setResetModal(prev => ({ ...prev, open: false }))
       actionRef.current?.reload()
     } catch (e: unknown) {
-      message.error((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '重置失败')
+      message.error((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '设置失败')
     }
   }
 
@@ -126,7 +126,7 @@ export default function AdminUsers() {
         rowKey="id"
         columns={columns}
         request={async (params) => {
-          const res = await axios.get('/api/admin/users', {
+          const res = await api.get('/api/admin/users', {
             params: { page: params.current, page_size: params.pageSize, keyword: params.keyword },
           })
           return { data: res.data.data, total: res.data.total, success: true }
@@ -137,11 +137,11 @@ export default function AdminUsers() {
       />
 
       <Modal
-        title="重置用户积分"
+        title="设置用户积分"
         open={resetModal.open}
         onOk={handleResetCredits}
         onCancel={() => setResetModal(prev => ({ ...prev, open: false }))}
-        okText="确认重置"
+        okText="确认设置"
       >
         <p className="text-gray-400 text-sm mb-3">当前余额：{resetModal.current} 积分</p>
         <InputNumber

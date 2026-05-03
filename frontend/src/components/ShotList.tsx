@@ -114,7 +114,7 @@ export default function ShotList({ shots, selectedIndex, onSelect, currentTime =
 
           return (
             <div
-              key={shot.index}
+              key={`shot-${shot.index}-${hasAnalysis ? 'analyzed' : 'unanalyzed'}-${hasError ? 'error' : 'ok'}`}
               className={`flex items-center gap-2 px-3 py-2 border-b border-gray-800 transition-colors
                 ${isSelected ? 'bg-indigo-900/60 border-l-2 border-l-indigo-400' : 'hover:bg-gray-800/50'}
                 ${isActive ? 'ring-1 ring-inset ring-indigo-500/50' : ''}`}

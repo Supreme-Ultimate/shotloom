@@ -192,7 +192,7 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
         shot_cards += f"""
 <div class="shot-card">
   <div class="shot-header">
-    {img_tag}
+    <div class="thumb-cell">{img_tag}</div>
     <div class="shot-meta">
       <h3>镜头 #{shot.get('index',0)+1}</h3>
       <p>时长：{shot.get('duration',0):.1f}s &nbsp;|&nbsp;
@@ -257,10 +257,10 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
 <head>
 <meta charset="UTF-8">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC&display=swap');
+  @page {{ size: A4; margin: 16mm 14mm; }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: 'Noto Sans SC', 'PingFang SC', sans-serif; font-size: 11px;
-          color: #1a1a2e; padding: 20px; background: #f8f9ff; }}
+  body {{ font-family: 'WenQuanYi Zen Hei', 'DejaVu Sans', sans-serif; font-size: 11px;
+          color: #1a1a2e; background: #f8f9ff; }}
   h1 {{ font-size: 20px; color: #1F3864; border-bottom: 3px solid #4f46e5;
         padding-bottom: 8px; margin-bottom: 16px; }}
   h2 {{ font-size: 16px; color: #312e81; margin: 20px 0 10px; }}
@@ -268,18 +268,20 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
   .shot-card {{ background: white; border-radius: 8px; padding: 12px;
                 margin-bottom: 16px; break-inside: avoid;
                 border-left: 4px solid #4f46e5; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-  .shot-header {{ display: flex; gap: 12px; margin-bottom: 10px; }}
-  .thumb {{ width: 120px; height: 68px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }}
+  .shot-header {{ display: table; width: 100%; table-layout: fixed; margin-bottom: 10px; }}
+  .thumb-cell {{ display: table-cell; width: 132px; padding-right: 12px; vertical-align: top; }}
+  .shot-meta {{ display: table-cell; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }}
+  .thumb {{ display: block; width: 120px; height: 68px; object-fit: cover; border-radius: 4px; }}
   .no-thumb {{ width: 120px; height: 68px; background: #e5e7eb; border-radius: 4px;
-               display: flex; align-items: center; justify-content: center; color: #9ca3af; }}
+               display: block; line-height: 68px; text-align: center; color: #9ca3af; }}
   .shot-meta h3 {{ font-size: 14px; color: #1e1b4b; margin: 0 0 4px; }}
-  .shot-meta p {{ margin: 2px 0; color: #374151; }}
+  .shot-meta p {{ margin: 2px 0; color: #374151; line-height: 1.55; }}
   .analysis-body {{ border-top: 1px solid #e5e7eb; padding-top: 8px; }}
   .why-block {{ background: #f5f3ff; border-radius: 6px; padding: 8px; margin: 8px 0; }}
   .label {{ font-weight: bold; color: #4f46e5; font-size: 10px;
             text-transform: uppercase; margin-top: 6px; }}
   .why-text {{ color: #1e1b4b; font-style: italic; }}
-  .content {{ color: #374151; margin-bottom: 4px; }}
+  .content {{ color: #374151; margin-bottom: 4px; overflow-wrap: anywhere; word-break: break-word; }}
   .narrative-block {{ background: #f0fdf4; border-radius: 6px; padding: 8px; margin: 6px 0; }}
   .narrative-block b {{ color: #166534; }}
   .section {{ background: white; border-radius: 8px; padding: 16px; margin-top: 20px; }}

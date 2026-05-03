@@ -1,15 +1,15 @@
-import shutil
 import av
+import uuid
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import Optional
 
 from database import get_db, Video, User, Shot, CreditTransaction
-from config import UPLOADS_DIR, SHOTS_DIR, THUMBNAILS_DIR
-from auth import get_current_user, get_current_user_optional
+from config import MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB, UPLOADS_DIR, SHOTS_DIR, THUMBNAILS_DIR
+from auth import get_current_user
 from logger import app_logger
+from permissions import get_video_for_user
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -46,36 +46,43 @@ def get_video_meta(filepath: str) -> dict:
 async def upload_video(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
     allowed = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm"}
-    suffix = Path(file.filename).suffix.lower()
+    original_filename = Path(file.filename or "upload").name
+    suffix = Path(original_filename).suffix.lower()
     if suffix not in allowed:
         app_logger.warning(f"上传失败: 不支持的格式 {suffix}")
         raise HTTPException(400, f"不支持的格式 {suffix}，支持：{', '.join(allowed)}")
 
-    save_path = UPLOADS_DIR / file.filename
-    counter = 1
-    while save_path.exists():
-        save_path = UPLOADS_DIR / f"{Path(file.filename).stem}_{counter}{suffix}"
-        counter += 1
+    save_path = UPLOADS_DIR / f"{uuid.uuid4().hex}{suffix}"
 
+    bytes_written = 0
     with open(save_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            bytes_written += len(chunk)
+            if bytes_written > MAX_UPLOAD_SIZE_BYTES:
+                f.close()
+                save_path.unlink(missing_ok=True)
+                raise HTTPException(413, f"文件过大，最大支持 {MAX_UPLOAD_SIZE_MB} MB")
+            f.write(chunk)
 
-    app_logger.info(f"视频上传成功: {save_path} | 用户: {current_user.email if current_user else 'anonymous'}")
+    app_logger.info(f"视频上传成功: {save_path} | 用户: {current_user.email}")
 
     meta = get_video_meta(str(save_path))
 
     video = Video(
-        filename=file.filename,
+        filename=original_filename,
         filepath=str(save_path),
         duration=meta["duration"],
         fps=meta["fps"],
         width=meta["width"],
         height=meta["height"],
         status="uploaded",
-        user_id=current_user.id if current_user else None,
+        user_id=current_user.id,
     )
     db.add(video)
     db.commit()
@@ -96,11 +103,11 @@ async def upload_video(
 @router.get("/videos")
 def list_videos(
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Video)
-    if current_user and not current_user.is_superuser:
-        query = query.filter(Video.user_id == current_user.id)
+    # The workspace is personal even for admins; cross-user views belong in
+    # explicit admin endpoints.
+    query = db.query(Video).filter(Video.user_id == current_user.id)
     videos = query.order_by(Video.created_at.desc()).all()
 
     result = []
@@ -118,10 +125,12 @@ def list_videos(
 
 
 @router.get("/videos/{video_id}")
-def get_video(video_id: int, db: Session = Depends(get_db)):
-    v = db.query(Video).filter(Video.id == video_id).first()
-    if not v:
-        raise HTTPException(404, "视频不存在")
+def get_video(
+    video_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    v = get_video_for_user(video_id, current_user, db)
     return {
         "id": v.id,
         "filename": v.filename,
@@ -139,17 +148,10 @@ def get_video(video_id: int, db: Session = Depends(get_db)):
 def delete_video(
     video_id: int,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
     """删除视频及所有相关产物"""
-    video = db.query(Video).filter(Video.id == video_id).first()
-    if not video:
-        raise HTTPException(404, "视频不存在")
-
-    # 权限检查：非管理员只能删除自己的视频
-    if current_user and not current_user.is_superuser and video.user_id != current_user.id:
-        app_logger.warning(f"删除权限不足: user={current_user.email}, video_id={video_id}")
-        raise HTTPException(403, "无权删除此视频")
+    video = get_video_for_user(video_id, current_user, db)
 
     app_logger.info(f"开始删除视频: video_id={video_id}, filename={video.filename}")
 
@@ -189,11 +191,13 @@ def delete_video(
 
 
 @router.get("/video-thumbnail/{video_id}")
-def get_video_thumbnail(video_id: int, db: Session = Depends(get_db)):
+def get_video_thumbnail(
+    video_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """获取视频封面（第一帧）"""
-    video = db.query(Video).filter(Video.id == video_id).first()
-    if not video:
-        raise HTTPException(404, "视频不存在")
+    video = get_video_for_user(video_id, current_user, db)
 
     thumb_path = THUMBNAILS_DIR / f"video_{video_id}_cover.jpg"
 

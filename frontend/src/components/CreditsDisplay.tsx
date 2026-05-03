@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import axios from 'axios'
-import { useAuth } from '../contexts/AuthContext'
+import api from '../utils/api'
+import { useAuth } from '../contexts/auth-context'
 
 export default function CreditsDisplay() {
   const { user } = useAuth()
@@ -8,7 +8,7 @@ export default function CreditsDisplay() {
 
   useEffect(() => {
     if (!user) return
-    axios.get('/api/credits/me')
+    api.get('/api/credits/me')
       .then(res => setBalance(res.data.balance))
       .catch(() => {})
   }, [user])

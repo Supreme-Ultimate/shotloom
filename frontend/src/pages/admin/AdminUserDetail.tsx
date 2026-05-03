@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ProTable } from '@ant-design/pro-components'
 import type { ProColumns } from '@ant-design/pro-components'
 import { Button, Descriptions, Tag, Spin } from 'antd'
-import axios from 'axios'
+import api from '../../utils/api'
 
 interface UserInfo {
   id: number
@@ -46,7 +46,7 @@ const STATUS_COLOR: Record<string, string> = {
 const REASON_LABEL: Record<string, string> = {
   initial_grant: '初始赠送',
   analysis: '视频分析',
-  admin_reset: '管理员重置',
+  admin_reset: '管理员设置',
   refund: '退款',
 }
 
@@ -58,7 +58,7 @@ export default function AdminUserDetail() {
 
   useEffect(() => {
     if (!userId) return
-    axios.get(`/api/admin/users/${userId}`)
+    api.get(`/api/admin/users/${userId}`)
       .then(res => setUserInfo(res.data))
       .finally(() => setLoading(false))
   }, [userId])
@@ -159,7 +159,7 @@ export default function AdminUserDetail() {
         rowKey="id"
         columns={videoColumns}
         request={async (params) => {
-          const res = await axios.get(`/api/admin/users/${userId}/videos`, {
+          const res = await api.get(`/api/admin/users/${userId}/videos`, {
             params: { page: params.current, page_size: params.pageSize },
           })
           return { data: res.data.data, total: res.data.total, success: true }
@@ -175,7 +175,7 @@ export default function AdminUserDetail() {
         rowKey="id"
         columns={txColumns}
         request={async (params) => {
-          const res = await axios.get(`/api/admin/users/${userId}/transactions`, {
+          const res = await api.get(`/api/admin/users/${userId}/transactions`, {
             params: { page: params.current, page_size: params.pageSize },
           })
           return { data: res.data.data, total: res.data.total, success: true }

@@ -8,9 +8,11 @@
 """
 import io
 import pytest
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 # ─── 测试数据库配置（内存 SQLite，与生产库完全隔离）────────────────────────────
@@ -33,8 +35,14 @@ def override_get_db():
 
 # ─── 创建测试客户端（必须在 import main 之前 patch DB）────────────────────────
 
-from database import Base, get_db, User, Video, Shot, Credits, CreditTransaction
+import config
+config.RUN_TASKS_INLINE = True
+import database
+database.engine = TEST_ENGINE
+database.SessionLocal = TestingSession
+from database import Base, get_db, User, Video, Shot, Credits, CreditTransaction, AnalysisTask
 from main import app
+import routers.analysis as analysis_router
 
 app.dependency_overrides[get_db] = override_get_db
 
@@ -42,6 +50,26 @@ app.dependency_overrides[get_db] = override_get_db
 Base.metadata.create_all(bind=TEST_ENGINE)
 
 client = TestClient(app, raise_server_exceptions=True)
+
+
+def clear_client_cookies():
+    client.cookies.clear()
+
+
+async def fake_run_analysis(_video_id, task_id, _user_id=None, _shot_indices=None):
+    db = TestingSession()
+    try:
+        task = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
+        if task:
+            task.stage = "completed"
+            task.done = task.total
+            db.commit()
+    finally:
+        db.close()
+
+
+ORIGINAL_RUN_ANALYSIS = analysis_router._run_analysis
+analysis_router._run_analysis = fake_run_analysis
 
 
 # ─── 工具函数 ───────────────────────────────────────────────────────────────────
@@ -214,6 +242,7 @@ class TestCurrentUser:
         assert data["is_superuser"] == False
 
     def test_get_me_no_token(self):
+        clear_client_cookies()
         r = client.get("/api/auth/me")
         assert r.status_code == 401
 
@@ -242,6 +271,7 @@ class TestCredits:
         assert data["balance"] == 100
 
     def test_credits_requires_auth(self):
+        clear_client_cookies()
         r = client.get("/api/credits/me")
         assert r.status_code == 401
 
@@ -267,16 +297,16 @@ class TestUpload:
         assert "video_id" in data
         assert data["filename"] == "test.mp4"
 
-    def test_upload_anonymous(self):
-        """匿名上传也可以，user_id 为空"""
+    def test_upload_requires_auth(self):
+        clear_client_cookies()
         r = client.post("/api/upload", files=[self._dummy_video("anon.mp4")])
-        assert r.status_code == 200
-        assert "video_id" in r.json()
+        assert r.status_code == 401
 
     def test_upload_invalid_format(self):
         r = client.post(
             "/api/upload",
             files=[("file", ("doc.txt", io.BytesIO(b"hello"), "text/plain"))],
+            headers=auth_headers(self.token),
         )
         assert r.status_code == 400
         assert "不支持" in r.json()["detail"]
@@ -309,11 +339,30 @@ class TestVideoList:
         r = client.get("/api/videos", headers=auth_headers(self.token_a))
         assert r.status_code == 200
         filenames = [v["filename"] for v in r.json()]
-        assert all("user_a" in f or "test" in f or "user_a" in f for f in filenames)
+        assert any("user_a" in f for f in filenames)
         assert not any("user_b" in f for f in filenames)
 
+    def test_admin_workspace_only_sees_own_videos(self):
+        r_admin = register("workspace_admin@example.com")
+        admin_token = r_admin.json()["access_token"]
+        make_superuser("workspace_admin@example.com")
+        admin_token = login("workspace_admin@example.com").json()["access_token"]
+
+        client.post(
+            "/api/upload",
+            files=[("file", ("admin_own.mp4", io.BytesIO(b"vid"), "video/mp4"))],
+            headers=auth_headers(admin_token),
+        )
+
+        r = client.get("/api/videos", headers=auth_headers(admin_token))
+
+        assert r.status_code == 200
+        filenames = [v["filename"] for v in r.json()]
+        assert any("admin_own" in f for f in filenames)
+        assert not any("user_a" in f or "user_b" in f for f in filenames)
+
     def test_video_not_found(self):
-        r = client.get("/api/videos/99999")
+        r = client.get("/api/videos/99999", headers=auth_headers(self.token_a))
         assert r.status_code == 404
 
 
@@ -340,6 +389,7 @@ class TestAdmin:
         assert r.status_code == 403
 
     def test_unauthenticated_cannot_access_admin(self):
+        clear_client_cookies()
         r = client.get("/api/admin/users")
         assert r.status_code == 401
 
@@ -504,33 +554,11 @@ class TestCreditsAnalysis:
         )
         assert r.status_code == 404
 
-    def test_analyze_anonymous_skips_credits_check(self):
-        """匿名请求不检查积分，正常启动分析"""
-        # 匿名视频（user_id=None）
-        db = get_db_session()
-        try:
-            video = Video(
-                user_id=None,
-                filename="anon_video.mp4",
-                filepath="/tmp/anon.mp4",
-                duration=20.0,
-                fps=25.0,
-                status="detected",
-            )
-            db.add(video)
-            db.flush()
-            db.add(Shot(
-                video_id=video.id, index=0,
-                start_time=0.0, end_time=10.0, duration=10.0,
-            ))
-            db.commit()
-            video_id = video.id
-        finally:
-            db.close()
-
+    def test_analyze_requires_auth(self):
+        clear_client_cookies()
+        video_id = create_video_with_shots(self.user_id, shot_count=1)
         r = client.post(f"/api/analyze/{video_id}")
-        # 匿名，无积分检查，返回 200
-        assert r.status_code == 200
+        assert r.status_code == 401
 
 
 class TestShotAdjust:
@@ -560,8 +588,119 @@ class TestShotAdjust:
         r = client.put(
             "/api/shots/99999/adjust",
             json={"shots": [{"start_time": 0.0, "end_time": 5.0}]},
+            headers=auth_headers(self.token),
         )
         assert r.status_code == 404
+
+
+class TestAuthorizationBoundaries:
+    @classmethod
+    def setup_class(cls):
+        r_owner = register("owner@example.com")
+        cls.owner_token = r_owner.json()["access_token"]
+        cls.owner_id = r_owner.json()["user_id"]
+        r_other = register("other@example.com")
+        cls.other_token = r_other.json()["access_token"]
+        cls.video_id = create_video_with_shots(cls.owner_id, shot_count=1)
+
+    def test_other_user_cannot_get_results(self):
+        r = client.get(f"/api/results/{self.video_id}", headers=auth_headers(self.other_token))
+        assert r.status_code == 403
+
+    def test_other_user_cannot_adjust_shots(self):
+        r = client.put(
+            f"/api/shots/{self.video_id}/adjust",
+            json={"shots": [{"start_time": 0.0, "end_time": 1.0}]},
+            headers=auth_headers(self.other_token),
+        )
+        assert r.status_code == 403
+
+    def test_owner_can_get_results(self):
+        r = client.get(f"/api/results/{self.video_id}", headers=auth_headers(self.owner_token))
+        assert r.status_code == 200
+
+
+class TestClipExtractorTimestamps:
+    def test_output_rate_rounds_fractional_source_rate(self):
+        from fractions import Fraction
+        from types import SimpleNamespace
+        from services.clip_extractor import _output_rate
+
+        assert _output_rate(SimpleNamespace(average_rate=Fraction(3097600, 129139))) == 24
+        assert _output_rate(SimpleNamespace(average_rate=None)) == 25
+
+    def test_audio_encoder_helper_exists_to_preserve_dialogue(self):
+        from services.clip_extractor import _encode_audio_track
+
+        assert callable(_encode_audio_track)
+
+
+class TestAiAnalyzerClipBounds:
+    def test_compute_extended_bounds_extends_first_shot_forward(self):
+        from services.ai_analyzer import _compute_extended_bounds
+
+        start, end = _compute_extended_bounds(0.0, 1.001, 15.133, 2.0)
+
+        assert start == 0.0
+        assert end >= 2.0
+
+    def test_compute_extended_bounds_extends_middle_shot_backward(self):
+        from services.ai_analyzer import _compute_extended_bounds
+
+        start, end = _compute_extended_bounds(10.339, 11.506, 15.133, 2.0)
+
+        assert start < 10.339
+        assert end == 11.506
+        assert end - start >= 2.0
+
+
+class TestAnalysisWorkerGuards:
+    def test_failed_clip_is_not_sent_to_ai(self):
+        db = get_db_session()
+        try:
+            r = register("failed_clip_user@example.com")
+            user_id = r.json()["user_id"]
+            video = Video(
+                user_id=user_id,
+                filename="failed_clip.mp4",
+                filepath="/tmp/failed_clip.mp4",
+                duration=10.0,
+                fps=25.0,
+                status="detected",
+            )
+            db.add(video)
+            db.flush()
+            shot = Shot(
+                video_id=video.id,
+                index=0,
+                start_time=0.0,
+                end_time=1.0,
+                duration=1.0,
+                clip_path=None,
+            )
+            db.add(shot)
+            db.commit()
+            video_id = video.id
+        finally:
+            db.close()
+
+        from task_store import create_task
+        create_task("missing_clip_task", video_id, user_id, 1, None)
+
+        with (
+            patch.object(analysis_router, "analyze_shot") as analyze_mock,
+            patch.object(analysis_router, "extract_shot_clips", return_value=[(None, None)]),
+        ):
+            import asyncio
+            asyncio.run(ORIGINAL_RUN_ANALYSIS(video_id, "missing_clip_task", user_id))
+            analyze_mock.assert_not_called()
+
+        db = get_db_session()
+        try:
+            stored = db.query(Shot).filter(Shot.video_id == video_id, Shot.index == 0).first()
+            assert "切片失败" in stored.analysis["error"]
+        finally:
+            db.close()
 
 
 class TestProgress:
@@ -570,6 +709,50 @@ class TestProgress:
         assert r.status_code == 200
         # SSE 流：第一个事件应包含 not_found
         assert "not_found" in r.text
+
+    def test_task_status_clears_stale_active_task(self):
+        r = register("stale_task_user@example.com")
+        token = r.json()["access_token"]
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=3)
+        task_id = "task_stale_refresh"
+        stale_time = datetime.now(timezone.utc) - timedelta(minutes=31)
+
+        db = get_db_session()
+        try:
+            video = db.query(Video).filter(Video.id == video_id).first()
+            video.status = "analyzing"
+            video.current_task_id = task_id
+            db.add(AnalysisTask(
+                id=task_id,
+                video_id=video_id,
+                user_id=user_id,
+                stage="analyzing",
+                done=0,
+                total=3,
+                updated_at=stale_time,
+            ))
+            db.commit()
+        finally:
+            db.close()
+
+        r = client.get(f"/api/videos/{video_id}/task-status", headers=auth_headers(token))
+
+        assert r.status_code == 200
+        assert r.json()["has_active_task"] is False
+        assert r.json()["task_id"] is None
+
+        db = get_db_session()
+        try:
+            task = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
+            video = db.query(Video).filter(Video.id == video_id).first()
+            assert task.stage == "error"
+            assert task.finished_at is not None
+            assert "异常中断" in task.message
+            assert video.status == "error"
+            assert video.current_task_id is None
+        finally:
+            db.close()
 
 
 # ─── 运行入口 ───────────────────────────────────────────────────────────────────

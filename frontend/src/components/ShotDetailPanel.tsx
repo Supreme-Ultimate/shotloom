@@ -107,6 +107,18 @@ export default function ShotDetailPanel({ shot, videoId }: Props) {
             </Section>
           ) : null}
 
+          {a.audio && (
+            <Section title="声音分析">
+              <Row label="音轨台词" value={a.audio.dialogue} />
+              <Row label="声音类型" value={a.audio.sound_type} />
+              <Row label="音乐" value={a.audio.music} />
+              <Row label="环境声" value={a.audio.ambient_sound} />
+              <Row label="人声情绪" value={a.audio.speaker_emotion} />
+              <Row label="声画关系" value={a.audiovisual_sync} />
+              <Row label="声音叙事" value={a.audio_narrative_role} />
+            </Section>
+          )}
+
           {/* WHW 分析 */}
           <Section title="创作者视角">
             <div className="bg-indigo-950/40 rounded-lg p-3 border border-indigo-900/50">

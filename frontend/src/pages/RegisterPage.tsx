@@ -3,8 +3,8 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import axios from 'axios'
-import { useAuth } from '../contexts/AuthContext'
+import api from '../utils/api'
+import { useAuth } from '../contexts/auth-context'
 
 const schema = z.object({
   display_name: z.string().min(1, '请输入昵称').max(20, '昵称不超过 20 个字符'),
@@ -18,7 +18,7 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>
 
 export default function RegisterPage() {
-  const { login, user } = useAuth()
+  const { refreshUser, user } = useAuth()
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -34,12 +34,12 @@ export default function RegisterPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const res = await axios.post('/api/auth/register', {
+      await api.post('/api/auth/register', {
         email: data.email,
         password: data.password,
         display_name: data.display_name,
       })
-      login(res.data.access_token)
+      await refreshUser()
       navigate('/')
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '注册失败，请稍后重试'

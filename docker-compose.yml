@@ -1,0 +1,109 @@
+name: video-analysis
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: video_analysis
+      POSTGRES_USER: video_analysis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-video_analysis_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U video_analysis -d video_analysis"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: video-analysis-backend:local
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ENV: production
+      DATABASE_URL: postgresql+psycopg2://video_analysis:${POSTGRES_PASSWORD:-video_analysis_change_me}@postgres:5432/video_analysis
+      REDIS_URL: redis://redis:6379/0
+      RUN_TASKS_INLINE: "false"
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+    volumes:
+      - app_uploads:/app/uploads
+      - app_shots:/app/shots
+      - app_thumbnails:/app/thumbnails
+      - app_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  worker:
+    image: video-analysis-backend:local
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    command: python worker.py
+    env_file: .env
+    environment:
+      ENV: production
+      DATABASE_URL: postgresql+psycopg2://video_analysis:${POSTGRES_PASSWORD:-video_analysis_change_me}@postgres:5432/video_analysis
+      REDIS_URL: redis://redis:6379/0
+      RUN_TASKS_INLINE: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+    volumes:
+      - app_uploads:/app/uploads
+      - app_shots:/app/shots
+      - app_thumbnails:/app/thumbnails
+      - app_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    image: video-analysis-frontend:local
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-视频拉片工具}
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_uploads:
+  app_shots:
+  app_thumbnails:
+  app_logs:

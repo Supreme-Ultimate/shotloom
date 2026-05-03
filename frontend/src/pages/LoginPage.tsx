@@ -3,8 +3,8 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import axios from 'axios'
-import { useAuth } from '../contexts/AuthContext'
+import api from '../utils/api'
+import { useAuth } from '../contexts/auth-context'
 
 const schema = z.object({
   email: z.string().email('请输入有效的邮箱地址'),
@@ -13,16 +13,20 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>
 
 export default function LoginPage() {
-  const { login, user } = useAuth()
+  const { refreshUser, user } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
   // 处理微信 OAuth 回调（token 在 query string 里）
   useEffect(() => {
-    const token = searchParams.get('token')
-    if (token) {
-      login(token)
-      navigate('/', { replace: true })
+    const wechatCode = searchParams.get('wechat_code')
+    if (wechatCode) {
+      api.post('/api/auth/wechat/exchange', null, { params: { code: wechatCode } })
+        .then(async () => {
+          await refreshUser()
+          navigate('/', { replace: true })
+        })
+        .catch(() => navigate('/login', { replace: true }))
     }
   }, [])
 
@@ -40,8 +44,8 @@ export default function LoginPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const res = await axios.post('/api/auth/login', data)
-      login(res.data.access_token)
+      await api.post('/api/auth/login', data)
+      await refreshUser()
       navigate('/')
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '登录失败，请检查邮箱和密码'
@@ -99,8 +103,8 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* 微信登录 */}
-          <div className="mt-4">
+          {/* 微信登录 - 暂时禁用 */}
+          {/* <div className="mt-4">
             <div className="flex items-center gap-3 my-4">
               <div className="flex-1 h-px bg-gray-800" />
               <span className="text-gray-600 text-xs">或</span>
@@ -116,7 +120,7 @@ export default function LoginPage() {
               </svg>
               微信扫码登录
             </a>
-          </div>
+          </div> */}
 
           <p className="text-center text-gray-600 text-xs mt-4">
             还没有账号？{' '}

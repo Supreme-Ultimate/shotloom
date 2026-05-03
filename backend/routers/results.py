@@ -4,18 +4,21 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 import av
 
-from database import get_db, Video, Shot, VideoAnalysis
+from database import get_db, Shot, VideoAnalysis, User
 from config import THUMBNAILS_DIR
-from logger import app_logger
+from auth import get_current_user
+from permissions import get_video_for_user
 
 router = APIRouter(prefix="/api", tags=["results"])
 
 
 @router.get("/results/{video_id}")
-def get_results(video_id: int, db: Session = Depends(get_db)):
-    video = db.query(Video).filter(Video.id == video_id).first()
-    if not video:
-        raise HTTPException(404, "视频不存在")
+def get_results(
+    video_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    video = get_video_for_user(video_id, current_user, db)
 
     shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
     va = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
@@ -46,11 +49,14 @@ def get_results(video_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/video-file/{video_id}")
-def stream_video(video_id: int, request: Request, db: Session = Depends(get_db)):
+def stream_video(
+    video_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """流式传输视频，支持 Range 请求和缓存"""
-    v = db.query(Video).filter(Video.id == video_id).first()
-    if not v:
-        raise HTTPException(404, "视频不存在")
+    v = get_video_for_user(video_id, current_user, db)
     p = Path(v.filepath)
     if not p.exists():
         raise HTTPException(404, "视频文件不存在")
@@ -111,7 +117,13 @@ def stream_video(video_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/thumbnail/{video_id}/{shot_index}")
-def get_thumbnail(video_id: int, shot_index: int, db: Session = Depends(get_db)):
+def get_thumbnail(
+    video_id: int,
+    shot_index: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    get_video_for_user(video_id, current_user, db)
     shot = (
         db.query(Shot)
         .filter(Shot.video_id == video_id, Shot.index == shot_index)
@@ -132,8 +144,15 @@ def get_thumbnail(video_id: int, shot_index: int, db: Session = Depends(get_db))
 
 
 @router.get("/clip/{video_id}/{shot_index}")
-def get_clip(video_id: int, shot_index: int, request: Request, db: Session = Depends(get_db)):
+def get_clip(
+    video_id: int,
+    shot_index: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """流式传输镜头切片，支持 Range 请求和缓存"""
+    get_video_for_user(video_id, current_user, db)
     shot = (
         db.query(Shot)
         .filter(Shot.video_id == video_id, Shot.index == shot_index)
@@ -192,11 +211,13 @@ def get_clip(video_id: int, shot_index: int, request: Request, db: Session = Dep
 
 
 @router.get("/video-thumbnail/{video_id}")
-def get_video_thumbnail(video_id: int, db: Session = Depends(get_db)):
+def get_video_thumbnail(
+    video_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """获取视频封面（第一帧）"""
-    video = db.query(Video).filter(Video.id == video_id).first()
-    if not video:
-        raise HTTPException(404, "视频不存在")
+    video = get_video_for_user(video_id, current_user, db)
 
     thumb_path = THUMBNAILS_DIR / f"video_{video_id}_cover.jpg"
 

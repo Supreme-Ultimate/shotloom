@@ -1,9 +1,8 @@
 """积分服务：查余额、扣积分、管理员重置"""
-from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from database import Credits, CreditTransaction
+from database import Credits, CreditTransaction, utcnow
 from config import INITIAL_CREDITS
 
 
@@ -46,7 +45,7 @@ def deduct(user_id: int, shot_count: int, video_id: int, db: Session):
             f"积分不足：需要 {shot_count} 积分，当前余额 {credits.balance} 积分"
         )
     credits.balance -= shot_count
-    credits.updated_at = datetime.utcnow()
+    credits.updated_at = utcnow()
     db.add(CreditTransaction(
         user_id=user_id,
         delta=-shot_count,
@@ -62,7 +61,7 @@ def admin_reset(user_id: int, new_balance: int, operator_id: int, db: Session):
     credits = get_or_create_credits(user_id, db)
     old_balance = credits.balance
     credits.balance = new_balance
-    credits.updated_at = datetime.utcnow()
+    credits.updated_at = utcnow()
     db.add(CreditTransaction(
         user_id=user_id,
         delta=new_balance - old_balance,

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
-import axios from 'axios'
+import api from '../utils/api'
+import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
 
 interface Props {
   onUploadComplete: (videoId: number) => void
@@ -18,14 +19,15 @@ export default function VideoUploader({ onUploadComplete }: Props) {
     const form = new FormData()
     form.append('file', file)
     try {
-      const res = await axios.post('/api/upload', form, {
+      const res = await api.post('/api/upload', form, {
         onUploadProgress: (e) => {
           if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
         },
       })
       onUploadComplete(res.data.video_id)
-    } catch (e: any) {
-      setError(e.response?.data?.detail || '上传失败')
+    } catch (e: unknown) {
+      console.error('上传失败:', getApiErrorStatus(e), getApiErrorData(e))
+      setError(getApiErrorMessage(e, '上传失败'))
     } finally {
       setUploading(false)
     }

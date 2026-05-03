@@ -1,11 +1,12 @@
-import io
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from database import get_db, Video, Shot, VideoAnalysis
+from database import get_db, Shot, VideoAnalysis, User
 from services.export_service import export_excel, export_pdf_html
 from logger import app_logger
+from auth import get_current_user
+from permissions import get_video_for_user
 
 router = APIRouter(prefix="/api", tags=["export"])
 
@@ -15,13 +16,12 @@ def export_report(
     video_id: int,
     format: str = Query("excel", pattern="^(excel|pdf)$"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     try:
         app_logger.info(f"开始导出: video_id={video_id}, format={format}")
 
-        video = db.query(Video).filter(Video.id == video_id).first()
-        if not video:
-            raise HTTPException(404, "视频不存在")
+        video = get_video_for_user(video_id, current_user, db)
         if video.status != "completed":
             raise HTTPException(400, "分析尚未完成，无法导出")
 

@@ -2,8 +2,11 @@ import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Tag, Spin, Empty, message, Modal } from 'antd'
 import CreditsDisplay from '../components/CreditsDisplay'
-import { useAuth } from '../contexts/AuthContext'
-import axios from 'axios'
+import { useAuth } from '../contexts/auth-context'
+import api from '../utils/api'
+import { API_BASE_URL } from '../config'
+import { APP_VERSION } from '../config/version'
+import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
 
 interface Video {
   id: number
@@ -59,15 +62,16 @@ export default function HomePage() {
     form.append('file', file)
 
     try {
-      const res = await axios.post('/api/upload', form, {
+      const res = await api.post('/api/upload', form, {
         onUploadProgress: (e) => {
           if (e.total) setUploadProgress(Math.round((e.loaded / e.total) * 100))
         },
       })
       message.success('上传成功')
       navigate(`/analysis/${res.data.video_id}`)
-    } catch (err: any) {
-      message.error(err.response?.data?.detail || '上传失败')
+    } catch (err: unknown) {
+      console.error('上传失败:', getApiErrorStatus(err), getApiErrorData(err))
+      message.error(getApiErrorMessage(err, '上传失败'))
     } finally {
       setUploading(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -86,11 +90,11 @@ export default function HomePage() {
       onOk: async () => {
         setDeletingId(videoId)
         try {
-          await axios.delete(`/api/videos/${videoId}`)
+          await api.delete(`/api/videos/${videoId}`)
           message.success('删除成功')
           loadVideos()
-        } catch (err: any) {
-          message.error(err.response?.data?.detail || '删除失败')
+        } catch (err: unknown) {
+          message.error(getApiErrorMessage(err, '删除失败'))
         } finally {
           setDeletingId(null)
         }
@@ -100,7 +104,7 @@ export default function HomePage() {
 
   const loadVideos = async () => {
     try {
-      const res = await axios.get('/api/videos')
+      const res = await api.get('/api/videos')
       setVideos(res.data)
     } catch (err) {
       console.error('加载视频列表失败:', err)
@@ -142,7 +146,7 @@ export default function HomePage() {
       </header>
 
       {/* 主体内容 */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto relative">
         <div className="max-w-7xl mx-auto px-6 py-8">
           {loading ? (
             <div className="flex justify-center py-12">
@@ -204,7 +208,7 @@ export default function HomePage() {
                       {/* 视频预览图 */}
                       <div className="relative aspect-video bg-gray-900 flex items-center justify-center overflow-hidden group">
                         <img
-                          src={`/api/video-thumbnail/${video.id}`}
+                          src={`${API_BASE_URL}/api/video-thumbnail/${video.id}`}
                           alt={video.filename}
                           className="w-full h-full object-cover"
                           onError={(e) => {
@@ -260,6 +264,11 @@ export default function HomePage() {
               )}
             </div>
           )}
+        </div>
+
+        {/* 版本号 - 左下角固定 */}
+        <div className="fixed bottom-4 left-4 text-xs text-gray-500 select-none">
+          {APP_VERSION}
         </div>
       </div>
     </div>

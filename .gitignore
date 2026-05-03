@@ -105,3 +105,11 @@ credentials.json
 
 # Documentation (optional - remove if you want to track these)
 PRODUCT_AUDIT.md
+smoke_credentials.txt
+
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3

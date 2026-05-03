@@ -5,11 +5,11 @@
 import jwt
 import bcrypt
 from datetime import datetime, timedelta, timezone
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Response, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from config import SECRET_KEY, JWT_LIFETIME_SECONDS
+from config import COOKIE_DOMAIN, COOKIE_SAMESITE, COOKIE_SECURE, JWT_LIFETIME_SECONDS, SECRET_KEY
 from database import get_db, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -47,15 +47,41 @@ def decode_token(token: str) -> int:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token 无效")
 
 
+def set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        max_age=JWT_LIFETIME_SECONDS,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        domain=COOKIE_DOMAIN,
+        path="/",
+    )
+
+
+def clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key="access_token",
+        domain=COOKIE_DOMAIN,
+        path="/",
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        httponly=True,
+    )
+
+
 # ─── 依赖注入 ─────────────────────────────────────────────────────────────────
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    access_token: str | None = Cookie(default=None),
     db: Session = Depends(get_db),
 ) -> User:
-    if not credentials:
+    token = credentials.credentials if credentials else access_token
+    if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "未提供认证 Token")
-    user_id = decode_token(credentials.credentials)
+    user_id = decode_token(token)
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户不存在或已禁用")
@@ -64,13 +90,15 @@ def get_current_user(
 
 def get_current_user_optional(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    access_token: str | None = Cookie(default=None),
     db: Session = Depends(get_db),
 ) -> User | None:
     """不强制登录，有 token 则返回用户，无 token 返回 None"""
-    if not credentials:
+    token = credentials.credentials if credentials else access_token
+    if not token:
         return None
     try:
-        user_id = decode_token(credentials.credentials)
+        user_id = decode_token(token)
         return db.query(User).filter(User.id == user_id, User.is_active == True).first()
     except HTTPException:
         return None
