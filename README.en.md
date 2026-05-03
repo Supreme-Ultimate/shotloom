@@ -1,10 +1,10 @@
-# Video Shot Analysis Tool
+# ShotLoom
 
 English | [中文](./README.md)
 
-Video Shot Analysis Tool is an AI-powered application for film/video breakdowns. It uploads videos, detects shot boundaries, extracts clips, asks a Qwen multimodal model to analyze each shot, and exports Excel/PDF reports.
+ShotLoom is AI-powered shot intelligence for film and video breakdowns. It uploads videos, detects shot boundaries, extracts clips, asks a Qwen multimodal model to analyze each shot, and exports Excel/PDF reports.
 
-> The current codebase is best suited for local use, research, and further development. Before exposing it on the public internet, address the access-control, secret-management, upload-limit, and deployment issues listed in `AUDIT.md`.
+ShotLoom combines "shot" and "loom": it weaves individual cuts into a readable, reviewable, exportable narrative thread.
 
 ## Features
 
@@ -12,7 +12,7 @@ Video Shot Analysis Tool is an AI-powered application for film/video breakdowns.
 - AI shot analysis: uses DashScope/Qwen multimodal models to analyze shot scale, camera movement, composition, lighting, rhythm, narrative intent, and more.
 - Continuity report: summarizes selected analyzed shots into a whole-video narrative and rhythm report.
 - Real-time progress: streams analysis progress through SSE and can recover active task state after page refresh.
-- Users and credits: email/password login, optional WeChat login, credit deduction, and admin credit reset.
+- Users and credits: email/password login, optional WeChat login, credit deduction, and admin credit setting.
 - Report export: exports Excel and PDF reports.
 - Admin console: lets admins inspect users, videos, credit transactions, and account status.
 

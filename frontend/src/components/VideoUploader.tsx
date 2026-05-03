@@ -48,8 +48,8 @@ export default function VideoUploader({ onUploadComplete }: Props) {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f0f14] px-4">
       <div className="mb-8 text-center">
-        <h1 className="text-4xl font-bold text-white mb-2">视频拉片工具</h1>
-        <p className="text-gray-400 text-sm">AI 驱动的镜头语言分析 · Powered by Qwen</p>
+        <h1 className="text-4xl font-bold text-white mb-2">ShotLoom</h1>
+        <p className="text-gray-400 text-sm">AI 驱动的镜头语言分析与拉片工作台 · Powered by Qwen</p>
       </div>
 
       <label

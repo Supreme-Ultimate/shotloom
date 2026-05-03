@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="视频拉片工具", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="ShotLoom", version="2.0.0", lifespan=lifespan)
 
 
 @app.middleware("http")

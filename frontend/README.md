@@ -1,6 +1,6 @@
-# 视频拉片工具 - 前端
+# ShotLoom Frontend
 
-基于 React + TypeScript + Vite 构建的视频分析前端应用，支持视频上传、镜头检测、AI 分析和导出功能。
+ShotLoom 前端基于 React + TypeScript + Vite 构建，支持视频上传、镜头检测、AI 分析和导出功能。
 
 ## 功能特性
 
@@ -34,7 +34,7 @@
 VITE_API_BASE_URL=
 
 # 应用标题
-VITE_APP_TITLE=视频拉片工具（开发环境）
+VITE_APP_TITLE=ShotLoom Dev
 ```
 
 ### 生产部署
@@ -46,7 +46,7 @@ VITE_APP_TITLE=视频拉片工具（开发环境）
 VITE_API_BASE_URL=https://your-backend-api.com
 
 # 应用标题
-VITE_APP_TITLE=视频拉片工具
+VITE_APP_TITLE=ShotLoom
 ```
 
 ## 快速开始
@@ -105,7 +105,7 @@ Vercel 会自动检测 Vite 项目，使用以下默认配置：
 | 变量名 | 值 | 说明 |
 |--------|-----|------|
 | `VITE_API_BASE_URL` | `https://your-backend-api.com` | 后端 API 地址（必填） |
-| `VITE_APP_TITLE` | `视频拉片工具` | 应用标题（可选） |
+| `VITE_APP_TITLE` | `ShotLoom` | 应用标题（可选） |
 
 **重要**：`VITE_API_BASE_URL` 必须是完整的 URL，包括协议（http:// 或 https://），不要以斜杠结尾。
 

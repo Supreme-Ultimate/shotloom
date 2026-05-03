@@ -9,7 +9,7 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 // 应用标题
-export const APP_TITLE = import.meta.env.VITE_APP_TITLE || '视频拉片工具'
+export const APP_TITLE = import.meta.env.VITE_APP_TITLE || 'ShotLoom'
 
 // 是否为生产环境
 export const IS_PRODUCTION = import.meta.env.PROD

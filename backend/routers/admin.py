@@ -138,7 +138,7 @@ def reset_credits(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_superuser),
 ):
-    """管理员重置用户积分"""
+    """管理员设置用户积分"""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(404, "用户不存在")

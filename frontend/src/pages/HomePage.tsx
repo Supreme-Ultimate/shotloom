@@ -127,7 +127,7 @@ export default function HomePage() {
     <div className="min-h-screen bg-[#0f0f14] flex flex-col">
       {/* 顶部导航 */}
       <header className="flex items-center justify-between px-6 py-3 bg-[#12121f] border-b border-gray-800">
-        <h1 className="text-white font-semibold text-sm">🎬 视频拉片工具</h1>
+        <h1 className="text-white font-semibold text-sm">🎬 ShotLoom</h1>
         <div className="flex items-center gap-4">
           <CreditsDisplay />
           <span className="text-gray-400 text-xs">{user?.display_name || user?.email}</span>

@@ -92,7 +92,7 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         VITE_API_BASE_URL: ""
-        VITE_APP_TITLE: ${VITE_APP_TITLE:-视频拉片工具}
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-ShotLoom}
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8080}:80"

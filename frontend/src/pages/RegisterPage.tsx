@@ -52,7 +52,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="text-3xl mb-2">🎬</div>
-          <h1 className="text-white text-xl font-semibold">视频拉片工具</h1>
+          <h1 className="text-white text-xl font-semibold">ShotLoom</h1>
           <p className="text-gray-500 text-sm mt-1">注册新账号，开始你的创作分析之旅</p>
         </div>
 

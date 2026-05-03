@@ -1,4 +1,4 @@
-"""积分服务：查余额、扣积分、管理员重置"""
+"""积分服务：查余额、扣积分、管理员设置"""
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -57,7 +57,7 @@ def deduct(user_id: int, shot_count: int, video_id: int, db: Session):
 
 
 def admin_reset(user_id: int, new_balance: int, operator_id: int, db: Session):
-    """管理员重置积分"""
+    """管理员设置积分"""
     credits = get_or_create_credits(user_id, db)
     old_balance = credits.balance
     credits.balance = new_balance

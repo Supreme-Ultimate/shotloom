@@ -59,8 +59,8 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="text-3xl mb-2">🎬</div>
-          <h1 className="text-white text-xl font-semibold">视频拉片工具</h1>
-          <p className="text-gray-500 text-sm mt-1">AI 驱动的专业镜头分析平台</p>
+          <h1 className="text-white text-xl font-semibold">ShotLoom</h1>
+          <p className="text-gray-500 text-sm mt-1">AI 驱动的镜头语言分析与拉片工作台</p>
         </div>
 
         {/* 登录卡片 */}
