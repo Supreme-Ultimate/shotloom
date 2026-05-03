@@ -61,7 +61,6 @@ ShotLoom combines "shot" and "loom": it weaves individual cuts into a readable, 
 │   ├── package.json
 │   └── vite.config.ts
 ├── .env.example              # Example environment variables
-├── AUDIT.md                  # Frontend/backend audit report
 ├── LICENSE                   # MIT License
 ├── README.md                 # Chinese README
 ├── README.en.md              # English README
@@ -346,16 +345,13 @@ Main endpoints use the `/api` prefix:
 
 Use `/docs` for the full OpenAPI reference.
 
-## Security Notes Before Public Deployment
+## Security And Deployment Notes
 
-This repository now includes an MIT License and bilingual README files. Before deploying publicly, you should at least:
-
-- Video read/write, detection, analysis, and export endpoints now require login and enforce resource ownership.
+- Video read/write, detection, analysis, and export endpoints require login and enforce resource ownership.
 - Production rejects the default or too-short `SECRET_KEY`.
 - Uploads use UUID storage names and enforce an application-level size limit; public deployments should still set reverse-proxy body limits.
 - CORS allowlists and database URLs are configurable through environment variables.
 - Never commit `.env`, databases, uploaded videos, logs, admin credentials, or generated artifacts.
-- See `AUDIT.md` for details.
 
 ## Contributing
 

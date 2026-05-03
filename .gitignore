@@ -103,7 +103,8 @@ credentials.json
 *.pem
 *.key
 
-# Documentation (optional - remove if you want to track these)
+# Internal documentation
+AUDIT.md
 PRODUCT_AUDIT.md
 smoke_credentials.txt
 
