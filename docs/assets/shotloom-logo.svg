@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" role="img" aria-labelledby="title desc">
+  <title id="title">ShotLoom logo</title>
+  <desc id="desc">A woven film-frame mark with the ShotLoom wordmark.</desc>
+  <defs>
+    <linearGradient id="frame" x1="102" y1="43" x2="283" y2="214" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f4efe0"/>
+      <stop offset="1" stop-color="#d6a24d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="127" y1="84" x2="278" y2="177" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eecb7a"/>
+      <stop offset="1" stop-color="#b46a35"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="260" rx="48" fill="#0f0f14"/>
+  <g transform="translate(56 34)">
+    <rect x="10" y="18" width="180" height="136" rx="34" fill="none" stroke="url(#frame)" stroke-width="14"/>
+    <path d="M52 20v132M103 20v132M154 20v132M10 64h180M10 110h180" stroke="#f3f0df" stroke-width="8" stroke-linecap="round" opacity=".92"/>
+    <path d="M75 58 132 86 75 114Z" fill="url(#accent)"/>
+    <path d="M38 174c38-31 86-31 124 0" fill="none" stroke="#d6a24d" stroke-width="13" stroke-linecap="round"/>
+    <circle cx="37" cy="42" r="8" fill="#d6a24d"/>
+    <circle cx="164" cy="132" r="8" fill="#d6a24d"/>
+  </g>
+  <g fill="#f4efe0" font-family="Georgia, 'Times New Roman', serif">
+    <text x="286" y="126" font-size="78" font-weight="700" letter-spacing="-2">ShotLoom</text>
+    <text x="290" y="170" font-size="24" fill="#c9bfaa" font-family="Verdana, sans-serif" letter-spacing="2.8">AI SHOT INTELLIGENCE</text>
+  </g>
+</svg>

@@ -1,6 +1,21 @@
-# ShotLoom
+<p align="center">
+  <img src="docs/assets/shotloom-logo.svg" alt="ShotLoom logo" width="520" />
+</p>
 
-English | [中文](./README.md)
+<p align="center">
+  English | <a href="./README.md">中文</a>
+</p>
+
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white" />
+  <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=0f172a" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
+  <img alt="Qwen" src="https://img.shields.io/badge/Qwen-Omni-7C3AED?style=for-the-badge" />
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-D6A24D?style=for-the-badge" />
+</p>
+
 
 ShotLoom is AI-powered shot intelligence for film and video breakdowns. It uploads videos, detects shot boundaries, extracts clips, asks a Qwen multimodal model to analyze each shot, and exports Excel/PDF reports.
 
@@ -12,7 +27,7 @@ ShotLoom combines "shot" and "loom": it weaves individual cuts into a readable, 
 - AI shot analysis: uses DashScope/Qwen multimodal models to analyze shot scale, camera movement, composition, lighting, rhythm, narrative intent, and more.
 - Continuity report: summarizes selected analyzed shots into a whole-video narrative and rhythm report.
 - Real-time progress: streams analysis progress through SSE and can recover active task state after page refresh.
-- Users and credits: email/password login, optional WeChat login, credit deduction, and admin credit setting.
+- Users and credits: email/password login, optional WeChat login, credit deduction, and admin credit setting. Built-in email registration does not verify email addresses yet.
 - Report export: exports Excel and PDF reports.
 - Admin console: lets admins inspect users, videos, credit transactions, and account status.
 
@@ -348,6 +363,7 @@ Use `/docs` for the full OpenAPI reference.
 ## Security And Deployment Notes
 
 - Video read/write, detection, analysis, and export endpoints require login and enforce resource ownership.
+- Built-in email registration does not include email verification, password recovery, MFA, abuse protection, or login rate limiting; configure an email provider and add the auth features your deployment needs before opening the service to external users.
 - Production rejects the default or too-short `SECRET_KEY`.
 - Uploads use UUID storage names and enforce an application-level size limit; public deployments should still set reverse-proxy body limits.
 - CORS allowlists and database URLs are configurable through environment variables.
