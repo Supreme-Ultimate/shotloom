@@ -123,6 +123,8 @@ MIN_MODEL_VIDEO_DURATION=2.0
 SCENE_THRESHOLD=27
 AI_CONCURRENCY=2
 MAX_UPLOAD_SIZE_MB=1024
+VITE_MAX_UPLOAD_SIZE_MB=1024
+NGINX_CLIENT_MAX_BODY_SIZE=1024m
 INITIAL_CREDITS=100
 FRONTEND_URL=http://localhost:5173
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
@@ -285,7 +287,7 @@ scripts/smoke_docker.sh
 - 使用 HTTPS 反向代理后设置 `COOKIE_SECURE=true`。
 - 将 `FRONTEND_URL` / `CORS_ORIGINS` 改为你的真实域名。
 - 不要使用模板里的 `SECRET_KEY` 和 `POSTGRES_PASSWORD`。
-- 大文件上传限制同时受 `MAX_UPLOAD_SIZE_MB` 和 Nginx `client_max_body_size` 影响。
+- 大文件上传限制同时受后端 `MAX_UPLOAD_SIZE_MB`、前端 `VITE_MAX_UPLOAD_SIZE_MB` 和 Nginx `client_max_body_size` / `NGINX_CLIENT_MAX_BODY_SIZE` 影响；三者建议保持一致。
 
 ## 手动开发
 

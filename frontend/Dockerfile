@@ -5,11 +5,14 @@ RUN npm ci
 COPY frontend/ ./
 ARG VITE_API_BASE_URL=
 ARG VITE_APP_TITLE=ShotLoom
+ARG VITE_MAX_UPLOAD_SIZE_MB=1024
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_APP_TITLE=$VITE_APP_TITLE
+ENV VITE_MAX_UPLOAD_SIZE_MB=$VITE_MAX_UPLOAD_SIZE_MB
 RUN npm run build
 
 FROM nginx:1.27-alpine
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+ENV NGINX_CLIENT_MAX_BODY_SIZE=1024m
+COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80

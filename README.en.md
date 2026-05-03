@@ -123,6 +123,8 @@ MIN_MODEL_VIDEO_DURATION=2.0
 SCENE_THRESHOLD=27
 AI_CONCURRENCY=2
 MAX_UPLOAD_SIZE_MB=1024
+VITE_MAX_UPLOAD_SIZE_MB=1024
+NGINX_CLIENT_MAX_BODY_SIZE=1024m
 INITIAL_CREDITS=100
 FRONTEND_URL=http://localhost:5173
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
@@ -285,7 +287,7 @@ Production notes:
 - Set `COOKIE_SECURE=true` behind HTTPS.
 - Set `FRONTEND_URL` / `CORS_ORIGINS` to your real domain.
 - Never use the template `SECRET_KEY` or `POSTGRES_PASSWORD`.
-- Upload limits are controlled by both `MAX_UPLOAD_SIZE_MB` and Nginx `client_max_body_size`.
+- Upload limits are controlled by backend `MAX_UPLOAD_SIZE_MB`, frontend `VITE_MAX_UPLOAD_SIZE_MB`, and Nginx `client_max_body_size` / `NGINX_CLIENT_MAX_BODY_SIZE`; keep all three aligned.
 
 ## Manual Development
 

@@ -3,6 +3,7 @@ import api from '../utils/api'
 import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
 import BrandMark from './BrandMark'
 import { SHOTLOOM_LOGO_URL } from '../config'
+import { getUploadSizeError, UPLOAD_HELP_TEXT } from '../utils/uploadLimits'
 
 interface Props {
   onUploadComplete: (videoId: number) => void
@@ -16,6 +17,12 @@ export default function VideoUploader({ onUploadComplete }: Props) {
 
   const upload = useCallback(async (file: File) => {
     setError('')
+    const sizeError = getUploadSizeError(file)
+    if (sizeError) {
+      setError(sizeError)
+      return
+    }
+
     setUploading(true)
     setProgress(0)
     const form = new FormData()
@@ -65,7 +72,7 @@ export default function VideoUploader({ onUploadComplete }: Props) {
         <p className="text-lg text-gray-300 font-medium">
           {uploading ? `上传中 ${progress}%` : '拖拽视频到这里，或点击选择'}
         </p>
-        <p className="text-xs text-gray-500">支持 MP4 / MOV / AVI / MKV / WebM</p>
+        <p className="text-xs text-gray-500">{UPLOAD_HELP_TEXT}</p>
 
         {uploading && (
           <div className="w-full bg-gray-700 rounded-full h-2 mt-2">

@@ -93,6 +93,9 @@ services:
       args:
         VITE_API_BASE_URL: ""
         VITE_APP_TITLE: ${VITE_APP_TITLE:-ShotLoom}
+        VITE_MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-1024}
+    environment:
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-1024m}
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8080}:80"

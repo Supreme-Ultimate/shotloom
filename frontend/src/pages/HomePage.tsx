@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Tag, Spin, Empty, message, Modal } from 'antd'
 import CreditsDisplay from '../components/CreditsDisplay'
 import BrandMark from '../components/BrandMark'
@@ -8,6 +8,7 @@ import api from '../utils/api'
 import { API_BASE_URL, SHOTLOOM_LOGO_URL } from '../config'
 import { APP_VERSION } from '../config/version'
 import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
+import { getUploadSizeError, UPLOAD_HELP_TEXT } from '../utils/uploadLimits'
 
 interface Video {
   id: number
@@ -57,6 +58,13 @@ export default function HomePage() {
   }
 
   const uploadFile = async (file: File) => {
+    const sizeError = getUploadSizeError(file)
+    if (sizeError) {
+      message.error(sizeError)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
     setUploading(true)
     setUploadProgress(0)
     const form = new FormData()
@@ -133,9 +141,9 @@ export default function HomePage() {
           <CreditsDisplay />
           <span className="text-gray-400 text-xs">{user?.display_name || user?.email}</span>
           {user?.is_superuser && (
-            <a href="/admin" className="text-xs text-[#d8a24a] hover:text-[#eecb7a] transition-colors">
+            <Link to="/admin" className="text-xs text-[#d8a24a] hover:text-[#eecb7a] transition-colors">
               管理后台
-            </a>
+            </Link>
           )}
           <button
             onClick={logout}
@@ -184,7 +192,7 @@ export default function HomePage() {
                 ) : (
                   <>
                     <p className="text-sm text-gray-300 font-medium text-center">上传新视频</p>
-                    <p className="text-xs text-gray-500 text-center">支持 MP4 / MOV / AVI / MKV</p>
+                    <p className="text-xs text-gray-500 text-center">{UPLOAD_HELP_TEXT}</p>
                   </>
                 )}
               </div>
