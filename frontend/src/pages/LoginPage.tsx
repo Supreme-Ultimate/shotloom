@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
+import BrandMark from '../components/BrandMark'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -56,11 +57,9 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-[#0f0f14] flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="text-3xl mb-2">🎬</div>
-          <h1 className="text-white text-xl font-semibold">ShotLoom</h1>
-          <p className="text-gray-500 text-sm mt-1">AI 驱动的镜头语言分析与拉片工作台</p>
+        {/* Brand */}
+        <div className="mb-8 flex justify-center">
+          <BrandMark size="md" subtitle="AI 驱动的镜头语言分析与拉片工作台" />
         </div>
 
         {/* 登录卡片 */}

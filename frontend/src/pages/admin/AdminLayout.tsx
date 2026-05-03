@@ -2,6 +2,7 @@ import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom'
 import { StyleProvider } from '@ant-design/cssinjs'
 import { ConfigProvider, Layout, Menu, theme } from 'antd'
 import { useAuth } from '../../contexts/auth-context'
+import BrandMark from '../../components/BrandMark'
 
 const { Sider, Content } = Layout
 
@@ -22,12 +23,11 @@ export default function AdminLayout() {
             width={200}
             style={{ background: '#12121f', borderRight: '1px solid #1f2937' }}
           >
-            {/* Logo */}
+            {/* Brand */}
             <div className="px-4 py-4 border-b border-gray-800">
-              <Link to="/" className="text-white font-semibold text-sm hover:text-indigo-300">
-                🎬 拉片工具
+              <Link to="/" className="block hover:opacity-90 transition-opacity">
+                <BrandMark size="sm" subtitle="管理后台" />
               </Link>
-              <div className="text-gray-500 text-xs mt-0.5">管理后台</div>
             </div>
 
             <Menu

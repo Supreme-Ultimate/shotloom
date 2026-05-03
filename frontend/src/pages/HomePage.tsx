@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Tag, Spin, Empty, message, Modal } from 'antd'
 import CreditsDisplay from '../components/CreditsDisplay'
+import BrandMark from '../components/BrandMark'
 import { useAuth } from '../contexts/auth-context'
 import api from '../utils/api'
 import { API_BASE_URL } from '../config'
@@ -126,13 +127,13 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#0f0f14] flex flex-col">
       {/* 顶部导航 */}
-      <header className="flex items-center justify-between px-6 py-3 bg-[#12121f] border-b border-gray-800">
-        <h1 className="text-white font-semibold text-sm">🎬 ShotLoom</h1>
-        <div className="flex items-center gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 bg-[#12121f] border-b border-gray-800">
+        <BrandMark size="sm" subtitle="Shot intelligence" />
+        <div className="flex flex-wrap items-center justify-end gap-4">
           <CreditsDisplay />
           <span className="text-gray-400 text-xs">{user?.display_name || user?.email}</span>
           {user?.is_superuser && (
-            <a href="/admin" className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+            <a href="/admin" className="text-xs text-[#d8a24a] hover:text-[#eecb7a] transition-colors">
               管理后台
             </a>
           )}
@@ -156,7 +157,7 @@ export default function HomePage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {/* 上传区卡片 - 左上角第一个 */}
               <div
-                className="bg-[#1a1a2e] border-2 border-dashed border-gray-600 hover:border-indigo-500 rounded-lg p-8 flex flex-col items-center justify-center gap-3 cursor-pointer transition-all min-h-[280px] hover:bg-[#1f1f35]"
+                className="bg-[#1a1a2e] border-2 border-dashed border-gray-600 hover:border-[#d8a24a] rounded-lg p-8 flex flex-col items-center justify-center gap-3 cursor-pointer transition-all min-h-[280px] hover:bg-[#1f1f35]"
                 onClick={() => fileInputRef.current?.click()}
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
@@ -169,13 +170,13 @@ export default function HomePage() {
                   onChange={handleFileSelect}
                   disabled={uploading}
                 />
-                <div className="text-4xl">🎬</div>
+                <img src="/shotloom.svg" alt="" className="h-12 w-12 rounded-2xl opacity-90" />
                 {uploading ? (
                   <>
                     <p className="text-sm text-gray-300 font-medium">上传中 {uploadProgress}%</p>
                     <div className="w-full bg-gray-700 rounded-full h-2">
                       <div
-                        className="bg-indigo-500 h-2 rounded-full transition-all"
+                        className="bg-[#d8a24a] h-2 rounded-full transition-all"
                         style={{ width: `${uploadProgress}%` }}
                       />
                     </div>
@@ -203,7 +204,7 @@ export default function HomePage() {
                     <div
                       key={video.id}
                       onClick={() => navigate(`/analysis/${video.id}`)}
-                      className="bg-[#1a1a2e] border border-gray-700 hover:border-indigo-500 rounded-lg overflow-hidden cursor-pointer transition-all hover:shadow-lg hover:shadow-indigo-500/20"
+                      className="bg-[#1a1a2e] border border-gray-700 hover:border-[#d8a24a] rounded-lg overflow-hidden cursor-pointer transition-all hover:shadow-lg hover:shadow-indigo-500/20"
                     >
                       {/* 视频预览图 */}
                       <div className="relative aspect-video bg-gray-900 flex items-center justify-center overflow-hidden group">
@@ -217,7 +218,7 @@ export default function HomePage() {
                             if (placeholder) placeholder.style.display = 'flex'
                           }}
                         />
-                        <div className="hidden text-6xl opacity-30">🎬</div>
+                        <img src="/shotloom.svg" alt="" className="hidden h-16 w-16 rounded-2xl opacity-25" />
                         <div className="absolute top-2 right-2 flex gap-2">
                           <Tag color={statusInfo.color} className="text-xs">
                             {statusInfo.label}

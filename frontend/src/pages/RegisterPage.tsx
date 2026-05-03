@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import BrandMark from '../components/BrandMark'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -50,10 +51,8 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-[#0f0f14] flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="text-3xl mb-2">🎬</div>
-          <h1 className="text-white text-xl font-semibold">ShotLoom</h1>
-          <p className="text-gray-500 text-sm mt-1">注册新账号，开始你的创作分析之旅</p>
+        <div className="mb-8 flex justify-center">
+          <BrandMark size="md" subtitle="注册新账号，开始你的创作分析之旅" />
         </div>
 
         <div className="bg-[#12121f] border border-gray-800 rounded-xl p-6 shadow-xl">
