@@ -781,6 +781,19 @@ class TestContextAnalyzer:
 
         assert strategy.mode == "shot_fallback"
 
+    def test_choose_strategy_allows_whole_video_url_for_large_file(self, tmp_path, monkeypatch):
+        import services.context_analyzer as context_analyzer
+
+        video = tmp_path / "large.mp4"
+        video.write_bytes(b"x" * 1024)
+        monkeypatch.setattr(context_analyzer.app_config, "QWEN_VIDEO_INPUT_MODE", "auto")
+        monkeypatch.setattr(context_analyzer.app_config, "PUBLIC_VIDEO_BASE_URL", "https://example.com/shotloom")
+        monkeypatch.setattr(context_analyzer.app_config, "CONTEXT_BASE64_MAX_MB", 0.0001)
+
+        strategy = context_analyzer.choose_analysis_strategy(30.0, 3, video_path=str(video))
+
+        assert strategy.mode == "whole_video"
+
     def test_build_shot_chunks_respects_overlap(self):
         from services.context_analyzer import build_shot_chunks
 
@@ -834,7 +847,7 @@ class TestContextAnalysisWorker:
         from task_store import create_task, get_task_progress
         create_task("context_task", video_id, user_id, 2, None)
 
-        async def fake_context(_path, _shots):
+        async def fake_context(_path, _shots, **_kwargs):
             return {
                 "shots": {
                     0: {"what": "A", "analysis_source": "whole_video"},
@@ -871,7 +884,7 @@ class TestContextAnalysisWorker:
         from task_store import create_task
         create_task("context_fallback_task", video_id, user_id, 2, None)
 
-        async def fake_context(_path, _shots):
+        async def fake_context(_path, _shots, **_kwargs):
             return {
                 "shots": {0: {"what": "A", "analysis_source": "whole_video"}},
                 "segments": [],
@@ -897,6 +910,102 @@ class TestContextAnalysisWorker:
             assert shots[1].analysis["what"] == "fallback"
         finally:
             db.close()
+
+
+class TestSignedVideoUrls:
+    def test_signed_video_url_roundtrip_and_tamper_rejected(self):
+        from services.signed_video_url import create_signed_video_token, verify_signed_video_token
+
+        token = create_signed_video_token(42, expires_in=60, secret="test-secret")
+        payload = verify_signed_video_token(token, secret="test-secret")
+
+        assert payload["video_id"] == 42
+        assert payload["scope"] == "ai_analysis"
+
+        tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
+        with pytest.raises(ValueError):
+            verify_signed_video_token(tampered, secret="test-secret")
+
+    def test_public_signed_video_endpoint_streams_without_login(self, tmp_path):
+        from services.signed_video_url import create_signed_video_token
+
+        video_path = tmp_path / "public.mp4"
+        video_path.write_bytes(b"fake video bytes")
+        db = get_db_session()
+        try:
+            user = User(email="signed_video@example.com", hashed_password="x")
+            db.add(user)
+            db.flush()
+            video = Video(
+                user_id=user.id,
+                filename="public.mp4",
+                filepath=str(video_path),
+                duration=1.0,
+                fps=25.0,
+                status="detected",
+            )
+            db.add(video)
+            db.commit()
+            video_id = video.id
+        finally:
+            db.close()
+
+        token = create_signed_video_token(video_id, expires_in=60, secret=config.SIGNED_VIDEO_URL_SECRET)
+        clear_client_cookies()
+        r = client.get(f"/api/public/video/{token}")
+
+        assert r.status_code == 200
+        assert r.content == b"fake video bytes"
+        assert r.headers["cache-control"] == "private, max-age=0, no-store"
+
+
+class TestOmniVideoInput:
+    def test_video_input_url_prefers_signed_public_url_for_large_file(self, tmp_path, monkeypatch):
+        from services.ai_analyzer import _video_input_url
+
+        video = tmp_path / "large.mp4"
+        video.write_bytes(b"x" * 1024)
+        monkeypatch.setattr(config, "QWEN_VIDEO_INPUT_MODE", "auto")
+        monkeypatch.setattr(config, "PUBLIC_VIDEO_BASE_URL", "https://example.com/shotloom")
+        monkeypatch.setattr(config, "CONTEXT_BASE64_MAX_MB", 0.0001)
+        monkeypatch.setattr(config, "SIGNED_VIDEO_URL_SECRET", "test-secret")
+
+        url = _video_input_url(str(video), video_id=7)
+
+        assert url.startswith("https://example.com/shotloom/api/public/video/")
+        assert not url.startswith("data:")
+
+    def test_video_input_url_uses_base64_when_file_is_small(self, tmp_path, monkeypatch):
+        from services.ai_analyzer import _video_input_url
+
+        video = tmp_path / "small.mp4"
+        video.write_bytes(b"small")
+        monkeypatch.setattr(config, "QWEN_VIDEO_INPUT_MODE", "auto")
+        monkeypatch.setattr(config, "PUBLIC_VIDEO_BASE_URL", "https://example.com/shotloom")
+        monkeypatch.setattr(config, "CONTEXT_BASE64_MAX_MB", 10)
+
+        url = _video_input_url(str(video), video_id=7)
+
+        assert url.startswith("data:video/mp4;base64,")
+
+    def test_call_model_with_retries_passes_video_id_to_omni(self, tmp_path, monkeypatch):
+        import services.ai_analyzer as ai
+
+        video = tmp_path / "large.mp4"
+        video.write_bytes(b"x")
+        seen = {}
+
+        def fake_call(path, prompt, video_id=None):
+            seen["video_id"] = video_id
+            return {"ok": True}
+
+        monkeypatch.setattr(ai, "_is_omni_model", lambda: True)
+        monkeypatch.setattr(ai, "_call_omni_model", fake_call)
+
+        result = ai._call_model_with_retries(str(video), "prompt", video_id=123)
+
+        assert result == {"ok": True}
+        assert seen["video_id"] == 123
 
 
 class TestProgress:

@@ -150,7 +150,13 @@ ShotLoom can derive shot-level analysis from whole-video context for short video
 | `CHUNK_SEGMENT_MAX_SHOTS` | `80` | Max shots per chunk for chunked segment analysis. |
 | `CHUNK_SEGMENT_OVERLAP_SHOTS` | `2` | Overlapping shots between adjacent chunks. |
 | `SHOT_FALLBACK_ENABLED` | `true` | Fall back to shot-level analysis when context analysis misses shots. |
+| `QWEN_VIDEO_INPUT_MODE` | `auto` | Qwen Omni video input mode: `auto` uses Base64 for small files and signed URLs for large files; force with `base64` or `url`. |
+| `PUBLIC_VIDEO_BASE_URL` | empty | Public base URL reachable by Qwen, for example `https://your-domain.com/shotloom`. |
+| `SIGNED_VIDEO_URL_EXPIRE_SECONDS` | `1800` | Signed video URL TTL in seconds. |
+| `SIGNED_VIDEO_URL_SECRET` | empty | Dedicated signing secret; use a random production value. Falls back to `SECRET_KEY` if empty. |
 | `CONTEXT_BASE64_MAX_MB` | `8` | Whole-video Base64 safety limit for OpenAI-compatible local file input. |
+
+When `PUBLIC_VIDEO_BASE_URL` is configured and the source video exceeds `CONTEXT_BASE64_MAX_MB`, ShotLoom gives Qwen a short-lived signed URL (`/api/public/video/{token}`) instead of Base64. The endpoint does not use user login state, but the token is HMAC-signed and expires automatically.
 
 
 

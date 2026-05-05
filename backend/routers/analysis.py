@@ -454,9 +454,9 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             context_result = {"shots": {}, "segments": []}
             try:
                 if strategy.mode == "whole_video":
-                    context_result = await analyze_whole_video_context(video.filepath, shots_to_analyze)
+                    context_result = await analyze_whole_video_context(video.filepath, shots_to_analyze, video_id=video.id)
                 else:
-                    context_result = await analyze_chunked_context(video.filepath, shots_to_analyze, SHOTS_DIR)
+                    context_result = await analyze_chunked_context(video.filepath, shots_to_analyze, SHOTS_DIR, video_id=video.id)
             except Exception as e:
                 context_failed = True
                 app_logger.error(f"[上下文分析失败] video_id={video_id}, mode={strategy.mode}, error={e}", exc_info=True)

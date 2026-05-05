@@ -6,7 +6,7 @@ import time
 
 from database import init_db
 from routers import upload, analysis, results, export
-from routers import auth_router, wechat, admin, credits
+from routers import auth_router, wechat, admin, credits, public
 from logger import app_logger
 from config import CORS_ORIGINS
 from rate_limit import rate_limit_middleware
@@ -58,6 +58,7 @@ app.include_router(auth_router.router)
 app.include_router(wechat.router)
 app.include_router(admin.router)
 app.include_router(credits.router)
+app.include_router(public.router)
 
 
 @app.get("/health")

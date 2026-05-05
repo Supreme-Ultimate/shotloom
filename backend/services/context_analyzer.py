@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import config as app_config
 from config import (
     ANALYSIS_ROUTER_MODE,
     WHOLE_VIDEO_MAX_DURATION,
@@ -25,16 +26,17 @@ class AnalysisStrategy:
 
 def choose_analysis_strategy(video_duration: float | None, shot_count: int, selected_count: int | None = None, video_path: str | None = None) -> AnalysisStrategy:
     """Choose the primary source for shot-level analysis."""
-    if ANALYSIS_ROUTER_MODE != "auto":
-        return AnalysisStrategy(ANALYSIS_ROUTER_MODE, f"forced by ANALYSIS_ROUTER_MODE={ANALYSIS_ROUTER_MODE}")
+    if app_config.ANALYSIS_ROUTER_MODE != "auto":
+        return AnalysisStrategy(app_config.ANALYSIS_ROUTER_MODE, f"forced by ANALYSIS_ROUTER_MODE={app_config.ANALYSIS_ROUTER_MODE}")
     if selected_count is not None and selected_count < shot_count:
         return AnalysisStrategy("shot_fallback", "selected-shot reanalysis uses local fallback")
     duration = float(video_duration or 0)
     if video_path:
         size_mb = Path(video_path).stat().st_size / 1024 / 1024 if Path(video_path).exists() else 0
-        if size_mb > CONTEXT_BASE64_MAX_MB:
+        can_use_public_url = app_config.QWEN_VIDEO_INPUT_MODE != "base64" and bool(app_config.PUBLIC_VIDEO_BASE_URL)
+        if size_mb > app_config.CONTEXT_BASE64_MAX_MB and not can_use_public_url:
             return AnalysisStrategy("chunk_segment", f"video file {size_mb:.1f}MB exceeds base64 whole-video limit")
-    if duration <= WHOLE_VIDEO_MAX_DURATION and shot_count <= WHOLE_VIDEO_MAX_SHOTS:
+    if duration <= app_config.WHOLE_VIDEO_MAX_DURATION and shot_count <= app_config.WHOLE_VIDEO_MAX_SHOTS:
         return AnalysisStrategy("whole_video", "video within whole-video context limits")
     return AnalysisStrategy("chunk_segment", "video exceeds whole-video context limits")
 
@@ -160,9 +162,9 @@ def _normalize_segment(raw: dict[str, Any], source: str, chunk_index: int | None
     return segment
 
 
-def _call_context_model(video_path: str, shots: list, source: str, start_time: float = 0.0, chunk_index: int | None = None) -> dict[str, Any]:
+def _call_context_model(video_path: str, shots: list, source: str, start_time: float = 0.0, chunk_index: int | None = None, video_id: int | None = None) -> dict[str, Any]:
     prompt = _context_prompt(shots, source, start_time)
-    raw = _call_model_with_retries(video_path, prompt)
+    raw = _call_model_with_retries(video_path, prompt, video_id=video_id)
     if isinstance(raw, str):
         raw = _extract_json(raw)
     shot_map: dict[int, dict[str, Any]] = {}
@@ -178,10 +180,10 @@ def _call_context_model(video_path: str, shots: list, source: str, start_time: f
     return {"shots": shot_map, "segments": segments, "raw": raw}
 
 
-async def analyze_whole_video_context(video_path: str, shots: list) -> dict[str, Any]:
+async def analyze_whole_video_context(video_path: str, shots: list, video_id: int | None = None) -> dict[str, Any]:
     app_logger.info(f"[上下文分析] 使用整片分析: shots={len(shots)}")
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: _call_context_model(video_path, shots, "whole_video"))
+    return await loop.run_in_executor(None, lambda: _call_context_model(video_path, shots, "whole_video", video_id=video_id))
 
 
 def build_shot_chunks(shots: list, max_duration: float = CHUNK_SEGMENT_DURATION, max_shots: int = CHUNK_SEGMENT_MAX_SHOTS, overlap_shots: int = CHUNK_SEGMENT_OVERLAP_SHOTS) -> list[list]:
@@ -205,7 +207,7 @@ def build_shot_chunks(shots: list, max_duration: float = CHUNK_SEGMENT_DURATION,
     return chunks
 
 
-async def analyze_chunked_context(video_path: str, shots: list, temp_dir: str | Path) -> dict[str, Any]:
+async def analyze_chunked_context(video_path: str, shots: list, temp_dir: str | Path, video_id: int | None = None) -> dict[str, Any]:
     chunks = build_shot_chunks(shots)
     app_logger.info(f"[上下文分析] 使用分块段落分析: chunks={len(chunks)}, shots={len(shots)}")
     merged_shots: dict[int, dict[str, Any]] = {}
@@ -221,7 +223,7 @@ async def analyze_chunked_context(video_path: str, shots: list, temp_dir: str | 
             _extract_extended_clip(video_path, str(chunk_path), start, end)
             result = await loop.run_in_executor(
                 None,
-                lambda: _call_context_model(str(chunk_path), chunk, "chunk_segment", start, chunk_index),
+                lambda: _call_context_model(str(chunk_path), chunk, "chunk_segment", start, chunk_index, video_id=None),
             )
             merged_shots.update(result["shots"])
             merged_segments.extend(result["segments"])

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import av
 import dashscope
+import config as app_config
 from openai import OpenAI
 from dashscope import MultiModalConversation
 
@@ -24,9 +25,13 @@ from config import (
     SHORT_SHOT_MERGE_MAX_SHOTS,
     MODEL_TRANSIENT_RETRIES,
     MODEL_TRANSIENT_RETRY_DELAY,
+    CONTEXT_BASE64_MAX_MB,
+    PUBLIC_VIDEO_BASE_URL,
+    QWEN_VIDEO_INPUT_MODE,
 )
 from prompt_config import build_shot_prompt
 from logger import app_logger
+from services.signed_video_url import build_signed_video_url
 
 dashscope.api_key = DASHSCOPE_API_KEY
 _openai_client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=DASHSCOPE_BASE_URL) if DASHSCOPE_API_KEY else None
@@ -155,12 +160,12 @@ def _is_transient_model_error(exc: Exception) -> bool:
     return any(marker in message for marker in transient_markers)
 
 
-def _call_model_with_retries(video_path: str, user_text: str) -> dict:
+def _call_model_with_retries(video_path: str, user_text: str, video_id: int | None = None) -> dict:
     attempts = max(1, MODEL_TRANSIENT_RETRIES + 1)
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return _call_omni_model(video_path, user_text) if _is_omni_model() else _call_vl_model(video_path, user_text)
+            return _call_omni_model(video_path, user_text, video_id=video_id) if _is_omni_model() else _call_vl_model(video_path, user_text)
         except Exception as exc:
             last_error = exc
             if attempt >= attempts or not _is_transient_model_error(exc):
@@ -193,6 +198,28 @@ def _video_data_url(video_path: str) -> str:
     return f"data:{media_type};base64,{encoded}"
 
 
+
+
+def _should_use_public_video_url(video_path: str, video_id: int | None = None) -> bool:
+    if app_config.QWEN_VIDEO_INPUT_MODE == "base64":
+        return False
+    if app_config.QWEN_VIDEO_INPUT_MODE == "url":
+        return bool(app_config.PUBLIC_VIDEO_BASE_URL and video_id)
+    if not app_config.PUBLIC_VIDEO_BASE_URL or video_id is None:
+        return False
+    path = Path(video_path)
+    if not path.exists():
+        return False
+    size_mb = path.stat().st_size / 1024 / 1024
+    return size_mb > app_config.CONTEXT_BASE64_MAX_MB
+
+
+def _video_input_url(video_path: str, video_id: int | None = None) -> str:
+    if _should_use_public_video_url(video_path, video_id):
+        return build_signed_video_url(int(video_id), app_config.PUBLIC_VIDEO_BASE_URL)
+    return _video_data_url(video_path)
+
+
 def _extract_text_from_openai_stream(chunks) -> str:
     parts: list[str] = []
     for chunk in chunks:
@@ -209,7 +236,7 @@ def _extract_text_from_openai_stream(chunks) -> str:
     return "".join(parts)
 
 
-def _call_omni_model(video_path: str, user_text: str) -> dict:
+def _call_omni_model(video_path: str, user_text: str, video_id: int | None = None) -> dict:
     if _openai_client is None:
         raise ValueError("未配置 DASHSCOPE_API_KEY，无法调用 Omni 模型")
 
@@ -221,7 +248,7 @@ def _call_omni_model(video_path: str, user_text: str) -> dict:
                 "content": [
                     {
                         "type": "video_url",
-                        "video_url": {"url": _video_data_url(video_path)},
+                        "video_url": {"url": _video_input_url(video_path, video_id=video_id)},
                     },
                     {"type": "text", "text": user_text},
                 ],
@@ -450,7 +477,7 @@ async def analyze_shot(
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: _call_model_with_retries(temp_clip_path, user_text),
+                lambda: _call_model_with_retries(temp_clip_path, user_text, video_id=None),
             )
             if unit.get("mode") == "merged_context":
                 result.setdefault("analysis_mode", "merged_context")
