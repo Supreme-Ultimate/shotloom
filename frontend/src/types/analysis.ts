@@ -41,6 +41,21 @@ export interface ShotAnalysis {
   emotional_function: string
   narrative_decision: string
   rhythm_contribution: string
+  analysis_mode?: 'single' | 'merged_context'
+  target_shot_index?: number
+  analysis_shot_indices?: number[]
+  merged_start_time?: number
+  merged_end_time?: number
+  target_offset_start?: number
+  target_offset_end?: number
+  context_shot_summaries?: Array<{
+    shot_index?: number
+    shot_scale?: string
+    summary?: string
+    action?: string
+    role?: string
+  }>
+  merged_segment_analysis?: string
   error?: string
 }
 

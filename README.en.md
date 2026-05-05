@@ -120,6 +120,9 @@ MODEL_NAME=qwen3.5-omni-flash
 CONTINUITY_MODEL_NAME=qwen-max
 PROMPT_CONFIG_PATH=backend/prompt_configs/default.json
 MIN_MODEL_VIDEO_DURATION=2.0
+SAFE_MODEL_VIDEO_DURATION=3.0
+SHORT_SHOT_MERGE_MAX_SHOTS=5
+MODEL_TRANSIENT_RETRIES=2
 SCENE_THRESHOLD=27
 AI_CONCURRENCY=2
 MAX_UPLOAD_SIZE_MB=1024
@@ -130,6 +133,9 @@ FRONTEND_URL=http://localhost:5173
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
+
+
+Short-shot handling: original shot boundaries are preserved. When a shot is shorter than `SAFE_MODEL_VIDEO_DURATION`, ShotLoom automatically merges neighboring shots into a stable analysis clip and marks the result with `analysis_mode=merged_context`, merge bounds, and context-shot summaries.
 
 ### Custom Prompts And Analysis Fields
 

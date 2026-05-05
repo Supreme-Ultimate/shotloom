@@ -18,6 +18,12 @@ function Row({ label, value }: { label: string; value?: string | string[] | bool
   )
 }
 
+
+function formatShotRange(indices?: number[]) {
+  if (!indices?.length) return ''
+  return indices.map(i => `#${i + 1}`).join('、')
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
@@ -85,6 +91,19 @@ export default function ShotDetailPanel({ shot, videoId }: Props) {
 
       {a && !hasError && (
         <>
+          {a.analysis_mode === 'merged_context' && (
+            <div className="mb-4 rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 text-xs text-amber-100">
+              <div className="mb-1 font-semibold text-amber-300">合并上下文分析</div>
+              <div>分析范围：{formatShotRange(a.analysis_shot_indices)}</div>
+              {typeof a.merged_start_time === 'number' && typeof a.merged_end_time === 'number' && (
+                <div>{a.merged_start_time.toFixed(1)}s → {a.merged_end_time.toFixed(1)}s</div>
+              )}
+              {typeof a.target_offset_start === 'number' && typeof a.target_offset_end === 'number' && (
+                <div>本镜头位于输入片段 {a.target_offset_start.toFixed(1)}s → {a.target_offset_end.toFixed(1)}s</div>
+              )}
+            </div>
+          )}
+
           {/* 基础信息 */}
           <Section title="镜头参数">
             <Row label="景别" value={a.shot_scale} />
@@ -145,6 +164,28 @@ export default function ShotDetailPanel({ shot, videoId }: Props) {
                   <p className="text-sm text-gray-300 mt-0.5">{a.narrative_level.information}</p>
                 </div>
               </div>
+            </Section>
+          )}
+
+          {a.context_shot_summaries?.length ? (
+            <Section title="上下文镜头">
+              <div className="space-y-2">
+                {a.context_shot_summaries.map((item, idx) => (
+                  <div key={idx} className="rounded border border-gray-800 bg-gray-900/40 p-2 text-xs text-gray-300">
+                    <div className="mb-1 text-amber-300">
+                      {typeof item.shot_index === 'number' ? `镜头 #${item.shot_index + 1}` : `上下文 ${idx + 1}`}
+                      {item.shot_scale ? ` · ${item.shot_scale}` : ''}
+                    </div>
+                    <div>{item.summary || item.action || item.role}</div>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          ) : null}
+
+          {a.merged_segment_analysis && (
+            <Section title="合并段落分析">
+              <p className="text-sm leading-relaxed text-gray-200">{a.merged_segment_analysis}</p>
             </Section>
           )}
 

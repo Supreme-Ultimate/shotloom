@@ -17,11 +17,11 @@ from uuid import uuid4
 from database import get_db, Video, Shot, VideoAnalysis, User
 from services.shot_detector import detect_shots
 from services.clip_extractor import extract_shot_clips
-from services.ai_analyzer import analyze_shot
+from services.ai_analyzer import analyze_shot, build_merged_analysis_unit
 from services.continuity_analyzer import analyze_continuity
 from services.credits_service import check_sufficient, deduct
 from auth import get_current_user
-from config import REDIS_URL, RUN_TASKS_INLINE, SCENE_THRESHOLD, TASK_QUEUE_NAME, TASK_STALE_MINUTES
+from config import REDIS_URL, RUN_TASKS_INLINE, SCENE_THRESHOLD, TASK_QUEUE_NAME, TASK_STALE_MINUTES, SAFE_MODEL_VIDEO_DURATION
 from logger import app_logger
 from permissions import get_video_for_user
 from task_store import cancel_task, create_task, get_task_progress, is_task_cancelled, reconcile_active_task, update_task
@@ -382,6 +382,14 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             try:
                 if not shot.clip_path or not Path(shot.clip_path).exists():
                     raise ValueError("切片失败：未生成可分析的视频片段，请重新检测或调整镜头边界后再分析")
+                analysis_unit = None
+                if shot.duration < SAFE_MODEL_VIDEO_DURATION:
+                    analysis_unit = build_merged_analysis_unit(shots, shot.index)
+                    app_logger.info(
+                        f"[短镜头合并] 镜头 {shot.index} 时长 {shot.duration:.2f}s，"
+                        f"使用镜头 {analysis_unit['analysis_shot_indices']} 合并分析，"
+                        f"范围 {analysis_unit['merged_start_time']:.2f}s-{analysis_unit['merged_end_time']:.2f}s"
+                    )
                 result = await analyze_shot(
                     clip_path=shot.clip_path,
                     shot_index=shot.index,
@@ -390,6 +398,7 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                     video_path=video.filepath,
                     start_time=shot.start_time,
                     end_time=shot.end_time,
+                    analysis_unit=analysis_unit,
                 )
                 shot.analysis = result
                 app_logger.info(f"[分析成功] 镜头 {shot.index} 分析成功")

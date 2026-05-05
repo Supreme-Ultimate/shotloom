@@ -653,6 +653,62 @@ class TestAiAnalyzerClipBounds:
         assert end == 11.506
         assert end - start >= 2.0
 
+    def test_build_merged_analysis_unit_first_shot_extends_forward(self):
+        from types import SimpleNamespace
+        from services.ai_analyzer import build_merged_analysis_unit
+
+        shots = [
+            SimpleNamespace(index=0, start_time=0.0, end_time=0.5),
+            SimpleNamespace(index=1, start_time=0.5, end_time=1.6),
+            SimpleNamespace(index=2, start_time=1.6, end_time=3.2),
+        ]
+
+        unit = build_merged_analysis_unit(shots, 0, safe_duration=3.0)
+
+        assert unit["mode"] == "merged_context"
+        assert unit["analysis_shot_indices"] == [0, 1, 2]
+        assert unit["merged_duration"] >= 3.0
+        assert unit["target_offset_start"] == 0.0
+
+    def test_build_merged_analysis_unit_last_shot_extends_backward(self):
+        from types import SimpleNamespace
+        from services.ai_analyzer import build_merged_analysis_unit
+
+        shots = [
+            SimpleNamespace(index=0, start_time=0.0, end_time=1.2),
+            SimpleNamespace(index=1, start_time=1.2, end_time=2.4),
+            SimpleNamespace(index=2, start_time=2.4, end_time=3.1),
+        ]
+
+        unit = build_merged_analysis_unit(shots, 2, safe_duration=3.0)
+
+        assert unit["mode"] == "merged_context"
+        assert unit["analysis_shot_indices"] == [0, 1, 2]
+        assert unit["merged_duration"] >= 3.0
+        assert unit["target_offset_start"] == 2.4
+
+    def test_build_merged_analysis_unit_middle_shot_extends_both_sides(self):
+        from types import SimpleNamespace
+        from services.ai_analyzer import build_merged_analysis_unit
+
+        shots = [
+            SimpleNamespace(index=0, start_time=0.0, end_time=1.3),
+            SimpleNamespace(index=1, start_time=1.3, end_time=1.8),
+            SimpleNamespace(index=2, start_time=1.8, end_time=3.1),
+        ]
+
+        unit = build_merged_analysis_unit(shots, 1, safe_duration=3.0)
+
+        assert unit["analysis_shot_indices"] == [0, 1, 2]
+        assert unit["target_offset_start"] == 1.3
+        assert unit["target_offset_end"] == 1.8
+
+    def test_transient_model_errors_are_retryable(self):
+        from services.ai_analyzer import _is_transient_model_error
+
+        assert _is_transient_model_error(Exception("Receive batching backend response failed!"))
+        assert not _is_transient_model_error(Exception("The video file is too short."))
+
 
 class TestAnalysisWorkerGuards:
     def test_failed_clip_is_not_sent_to_ai(self):

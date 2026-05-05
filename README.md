@@ -120,6 +120,9 @@ MODEL_NAME=qwen3.5-omni-flash
 CONTINUITY_MODEL_NAME=qwen-max
 PROMPT_CONFIG_PATH=backend/prompt_configs/default.json
 MIN_MODEL_VIDEO_DURATION=2.0
+SAFE_MODEL_VIDEO_DURATION=3.0
+SHORT_SHOT_MERGE_MAX_SHOTS=5
+MODEL_TRANSIENT_RETRIES=2
 SCENE_THRESHOLD=27
 AI_CONCURRENCY=2
 MAX_UPLOAD_SIZE_MB=1024
@@ -130,6 +133,9 @@ FRONTEND_URL=http://localhost:5173
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
+
+
+短镜头处理：原始镜头边界会保留；当镜头短于 `SAFE_MODEL_VIDEO_DURATION` 时，系统会自动向前/向后合并邻近镜头构造分析片段，并在结果中标记 `analysis_mode=merged_context`、合并范围和上下文镜头摘要。
 
 ### 自定义 Prompt 与分析字段
 

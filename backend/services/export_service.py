@@ -44,6 +44,7 @@ def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
         "叙事-场景", "叙事-事件", "叙事-信息",
         "情绪功能", "叙事决策", "节奏贡献",
         "台词", "声音类型", "声画关系", "声音叙事作用",
+        "分析方式", "合并镜头", "合并段落分析",
     ]
 
     ws.row_dimensions[1].height = 20
@@ -57,7 +58,7 @@ def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
     # 列宽
     col_widths = [12, 6, 8, 8, 8, 8, 8, 20, 18, 15,
                   30, 30, 35, 20, 25, 25, 18, 30, 15,
-                  25, 18, 20, 30]
+                  25, 18, 20, 30, 14, 20, 40]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -93,6 +94,9 @@ def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
             _safe(audio.get("sound_type")),
             _safe(a.get("audiovisual_sync")),
             _safe(a.get("audio_narrative_role")),
+            "合并上下文" if a.get("analysis_mode") == "merged_context" else "单镜头",
+            _safe([i + 1 for i in a.get("analysis_shot_indices", [])]) if a.get("analysis_shot_indices") else "—",
+            _safe(a.get("merged_segment_analysis")),
         ]
 
         for col_i, val in enumerate(values, 1):
@@ -201,6 +205,7 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
          <b>运镜：</b>{_safe(a.get('camera_movement'))}</p>
       <p><b>光影：</b>{_safe(a.get('lighting'))}</p>
       <p><b>色调：</b>{_safe(a.get('color_tone'))}</p>
+      {f"<p><b>分析方式：</b>合并上下文 &nbsp; <b>合并镜头：</b>{_safe([i + 1 for i in a.get('analysis_shot_indices', [])])}</p>" if a.get('analysis_mode') == 'merged_context' else ""}
     </div>
   </div>
   <div class="analysis-body">
