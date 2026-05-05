@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from unittest.mock import patch
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 # ─── 测试数据库配置（内存 SQLite，与生产库完全隔离）────────────────────────────
 
@@ -999,6 +1000,141 @@ class TestContextAnalysisWorker:
         assert db_snapshots == [["A", "B", None]]
         assert (1, 2, "分块上下文分析 1/2：已写入 2 个镜头") in updates
         assert (2, 2, "分块上下文分析 2/2：已写入 1 个镜头") in updates
+
+
+class TestExportCompleteness:
+    def _export_payload(self):
+        video = {"id": 1, "filename": "demo.mp4", "duration": 12.5}
+        shots = [{
+            "index": 0,
+            "start_time": 0.0,
+            "end_time": 2.5,
+            "duration": 2.5,
+            "thumbnail_path": None,
+            "analysis": {
+                "shot_scale": "近景",
+                "composition": "居中构图",
+                "camera_movement": "固定",
+                "lighting": "柔光",
+                "color_tone": "暖色",
+                "content_description": "角色抬头看向窗外",
+                "on_screen_text": "字幕A",
+                "time_evidence": "0.000s-2.500s",
+                "dialogue": "你好",
+                "audio": {
+                    "dialogue": "你好，世界",
+                    "speaker": "女声，普通话",
+                    "sound_type": "人声+环境声",
+                    "music": "轻柔钢琴",
+                    "ambient_sound": "雨声",
+                    "speaker_emotion": "平静",
+                    "transcript_timestamps": "0.300s-1.200s",
+                },
+                "audiovisual_sync": "台词与表情同步",
+                "audio_narrative_role": "交代人物状态",
+                "audio_continuity": {
+                    "continues_from_previous": False,
+                    "continues_to_next": True,
+                    "unfinished_dialogue": True,
+                    "notes": "台词延续到下一镜头",
+                },
+                "action_continuity": {
+                    "continues_from_previous": False,
+                    "continues_to_next": True,
+                    "notes": "抬头动作继续",
+                },
+                "what": "角色抬头",
+                "how": "固定近景呈现表情",
+                "why": "强调情绪变化",
+                "narrative_level": {"scene": "室内", "event": "抬头", "information": "听到声音"},
+                "emotional_function": "悬念",
+                "narrative_decision": "延迟揭示",
+                "rhythm_contribution": "中等节奏",
+                "analysis_source": "chunk_segment",
+                "custom_new_field": {"nested": "自定义字段保留"},
+            },
+        }]
+        analysis = {
+            "continuity": {
+                "shot_scale_flow": "近景到特写",
+                "movement_coherence": "动作顺接",
+                "emotional_arc": "平静到紧张",
+                "color_continuity": "暖色持续",
+                "custom_audio_arc": "雨声贯穿",
+            },
+            "rhythm": {
+                "avg_shot_duration": 2.5,
+                "shortest_shot": 2.5,
+                "longest_shot": 2.5,
+                "plot_change_frequency": "稳定",
+                "info_density_pattern": "逐步增加",
+                "pacing_assessment": "节奏稳定",
+                "tension_peaks": ["镜头1"],
+            },
+            "narrative_structure": {
+                "detected_genre": "剧情",
+                "three_act": "开端",
+                "key_turning_points": ["镜头1"],
+                "information_release_strategy": "延迟揭示",
+            },
+            "genre_patterns": {"structural_notes": "类型惯例", "deviation_notes": "无"},
+            "custom_overall": {"score": "完整保留"},
+        }
+        segments = {
+            "strategy": "chunk_segment",
+            "reason": "test",
+            "shot_count": 1,
+            "segments": [{
+                "segment_index": 0,
+                "shot_indices": [0],
+                "segment_type": "dialogue_continuity",
+                "title": "开场段落",
+                "summary": "角色听见声音",
+                "merge_reason": "声音连续",
+                "audio_continuity": "雨声持续",
+                "action_continuity": "抬头动作延续",
+                "editing_logic": "动作匹配",
+                "emotional_arc": "悬念增强",
+                "narrative_function": "建立情境",
+                "custom_segment_field": {"detail": "段落自定义字段保留"},
+            }],
+        }
+        return video, shots, analysis, segments
+
+    def test_excel_export_includes_shot_segments_overall_and_complete_fields(self):
+        from services.export_service import export_excel
+
+        data = export_excel(*self._export_payload())
+        wb = load_workbook(io.BytesIO(data))
+
+        expected = {
+            "导出说明",
+            "镜头分析",
+            "镜头完整JSON",
+            "整体分析",
+            "整体分析完整字段",
+            "段落分析",
+            "段落分析完整字段",
+        }
+        assert expected.issubset(set(wb.sheetnames))
+        assert "时间证据" in [cell.value for cell in wb["镜头分析"][1]]
+        assert "说话者/声线" in [cell.value for cell in wb["镜头分析"][1]]
+        assert "台词时间戳" in [cell.value for cell in wb["镜头分析"][1]]
+        assert "自定义字段保留" in wb["镜头完整JSON"]["B2"].value
+        assert any(row[0] == "custom_overall.score" and row[1] == "完整保留" for row in wb["整体分析完整字段"].iter_rows(values_only=True))
+        assert any(row[1] == "custom_segment_field.detail" and row[2] == "段落自定义字段保留" for row in wb["段落分析完整字段"].iter_rows(values_only=True))
+
+    def test_pdf_html_export_includes_complete_json_sections(self):
+        from services.export_service import export_pdf_html
+
+        html = export_pdf_html(*self._export_payload())
+
+        assert "完整镜头分析 JSON" in html
+        assert "完整整体分析 JSON" in html
+        assert "完整段落分析 JSON" in html
+        assert "自定义字段保留" in html
+        assert "段落自定义字段保留" in html
+        assert "0.300s-1.200s" in html
 
 
 class TestSignedVideoUrls:

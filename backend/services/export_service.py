@@ -3,8 +3,10 @@
 """
 import io
 import base64
+import html
+import json
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -18,6 +20,48 @@ def _safe(val, default="—"):
     if isinstance(val, list):
         return "；".join(str(v) for v in val)
     return str(val)
+
+
+def _json_dump(value: Any) -> str:
+    if value is None:
+        return ""
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _flatten(value: Any, prefix: str = "") -> list[tuple[str, str]]:
+    """Flatten nested analysis data so exports keep fields added by custom prompts."""
+    if isinstance(value, dict):
+        rows: list[tuple[str, str]] = []
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            rows.extend(_flatten(child, child_prefix))
+        return rows
+    if isinstance(value, list):
+        if all(not isinstance(item, (dict, list)) for item in value):
+            return [(prefix, _safe(value))]
+        rows = []
+        for idx, child in enumerate(value):
+            child_prefix = f"{prefix}[{idx}]"
+            rows.extend(_flatten(child, child_prefix))
+        return rows
+    return [(prefix, _safe(value))]
+
+
+def _style_header_row(ws, headers: list[str], fill, font, border):
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.fill = fill
+        cell.font = font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+
+
+def _autosize_key_value_sheet(ws):
+    ws.column_dimensions["A"].width = 34
+    ws.column_dimensions["B"].width = 96
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
 def _analysis_source_label(analysis: dict) -> str:
@@ -54,26 +98,24 @@ def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict 
     headers = [
         "缩略图", "镜头#", "时长(s)", "开始", "结束",
         "景别", "运镜", "构图", "光影", "色调",
-        "WHAT", "HOW", "WHY",
+        "画面描述", "画面文字", "时间证据", "WHAT", "HOW", "WHY",
         "叙事-场景", "叙事-事件", "叙事-信息",
         "情绪功能", "叙事决策", "节奏贡献",
-        "台词", "声音类型", "声画关系", "声音叙事作用",
+        "台词", "说话者/声线", "声音类型", "音乐", "环境声", "人声情绪", "台词时间戳",
+        "声画关系", "声音叙事作用",
         "分析方式", "合并镜头", "合并段落分析",
-        "声音连续", "动作连续",
+        "声音承前", "声音启后", "台词未完", "声音连续说明",
+        "动作承前", "动作启后", "动作连续说明", "错误",
     ]
 
     ws.row_dimensions[1].height = 20
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = border
+    _style_header_row(ws, headers, header_fill, header_font, border)
 
     # 列宽
     col_widths = [12, 6, 8, 8, 8, 8, 8, 20, 18, 15,
-                  30, 30, 35, 20, 25, 25, 18, 30, 15,
-                  25, 18, 20, 30, 14, 20, 40, 30, 30]
+                  36, 28, 24, 30, 30, 35, 20, 25, 25, 18,
+                  30, 15, 32, 24, 18, 20, 22, 20, 20, 30,
+                  14, 20, 40, 12, 12, 12, 30, 12, 12, 30, 28]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -98,6 +140,9 @@ def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict 
             _safe(a.get("composition")),
             _safe(a.get("lighting")),
             _safe(a.get("color_tone")),
+            _safe(a.get("content_description")),
+            _safe(a.get("on_screen_text")),
+            _safe(a.get("time_evidence")),
             _safe(a.get("what")),
             _safe(a.get("how")),
             _safe(a.get("why")),
@@ -107,15 +152,26 @@ def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict 
             _safe(a.get("emotional_function")),
             _safe(a.get("narrative_decision")),
             _safe(a.get("rhythm_contribution")),
-            _safe(audio.get("dialogue")),
+            _safe(audio.get("dialogue") or a.get("dialogue")),
+            _safe(audio.get("speaker")),
             _safe(audio.get("sound_type")),
+            _safe(audio.get("music")),
+            _safe(audio.get("ambient_sound")),
+            _safe(audio.get("speaker_emotion")),
+            _safe(audio.get("transcript_timestamps")),
             _safe(a.get("audiovisual_sync")),
             _safe(a.get("audio_narrative_role")),
             _analysis_source_label(a),
             _safe([i + 1 for i in a.get("analysis_shot_indices", [])]) if a.get("analysis_shot_indices") else "—",
             _safe(a.get("merged_segment_analysis")),
+            _safe(audio_continuity.get("continues_from_previous")),
+            _safe(audio_continuity.get("continues_to_next")),
+            _safe(audio_continuity.get("unfinished_dialogue")),
             _safe(audio_continuity.get("notes")),
+            _safe(action_continuity.get("continues_from_previous")),
+            _safe(action_continuity.get("continues_to_next")),
             _safe(action_continuity.get("notes")),
+            _safe(a.get("error")),
         ]
 
         for col_i, val in enumerate(values, 1):
@@ -138,7 +194,20 @@ def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict 
             except Exception:
                 pass
 
-    # ── Sheet 2: 整体分析 ──────────────────────────────
+    # ── Sheet 2: 镜头完整 JSON ─────────────────────────
+    ws_json = wb.create_sheet("镜头完整JSON")
+    _style_header_row(ws_json, ["镜头#", "完整分析 JSON"], header_fill, header_font, border)
+    ws_json.column_dimensions["A"].width = 10
+    ws_json.column_dimensions["B"].width = 120
+    for row_i, shot in enumerate(shots, 2):
+        ws_json.cell(row=row_i, column=1, value=shot.get("index", row_i - 2) + 1)
+        ws_json.cell(row=row_i, column=2, value=_json_dump(shot.get("analysis") or {}))
+        ws_json.row_dimensions[row_i].height = 120
+        for cell in ws_json[row_i]:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.border = border
+
+    # ── Sheet 3: 整体分析 ──────────────────────────────
     ws2 = wb.create_sheet("整体分析")
     ws2.column_dimensions["A"].width = 25
     ws2.column_dimensions["B"].width = 80
@@ -190,6 +259,17 @@ def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict 
                 v_cell.fill = header_fill2
             ws2.row_dimensions[r_i].height = max(15, min(120, len(str(v)) // 2))
 
+        ws2_flat = wb.create_sheet("整体分析完整字段")
+        _style_header_row(ws2_flat, ["字段", "值"], header_fill, header_font, border)
+        _autosize_key_value_sheet(ws2_flat)
+        for r_i, (key, value) in enumerate(_flatten(analysis), 2):
+            ws2_flat.cell(row=r_i, column=1, value=key)
+            ws2_flat.cell(row=r_i, column=2, value=value)
+            ws2_flat.row_dimensions[r_i].height = max(18, min(140, len(str(value)) // 2))
+        for row in ws2_flat.iter_rows():
+            for cell in row:
+                cell.border = border
+
     segment_rows = (segments or {}).get("segments") or []
     if segment_rows:
         ws3 = wb.create_sheet("段落分析")
@@ -225,6 +305,41 @@ def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict 
                 if row_i % 2 == 0:
                     cell.fill = alt_fill
 
+        ws3_flat = wb.create_sheet("段落分析完整字段")
+        _style_header_row(ws3_flat, ["段落#", "字段", "值"], header_fill, header_font, border)
+        ws3_flat.column_dimensions["A"].width = 10
+        ws3_flat.column_dimensions["B"].width = 34
+        ws3_flat.column_dimensions["C"].width = 96
+        out_row = 2
+        for segment in segment_rows:
+            segment_no = int(segment.get("segment_index", out_row - 2)) + 1
+            for key, value in _flatten(segment):
+                ws3_flat.cell(row=out_row, column=1, value=segment_no)
+                ws3_flat.cell(row=out_row, column=2, value=key)
+                ws3_flat.cell(row=out_row, column=3, value=value)
+                ws3_flat.row_dimensions[out_row].height = max(18, min(140, len(str(value)) // 2))
+                for cell in ws3_flat[out_row]:
+                    cell.alignment = Alignment(vertical="top", wrap_text=True)
+                    cell.border = border
+                out_row += 1
+
+    manifest = wb.create_sheet("导出说明", 0)
+    manifest.column_dimensions["A"].width = 24
+    manifest.column_dimensions["B"].width = 90
+    manifest_rows = [
+        ("视频文件", video.get("filename", "")),
+        ("镜头数量", len(shots)),
+        ("包含内容", "镜头摘要、镜头完整 JSON、整体分析摘要、整体分析完整字段、段落分析摘要、段落分析完整字段"),
+        ("说明", "完整字段页会保留自定义 prompt 新增字段，避免导出遗漏分析结果。"),
+    ]
+    for row_i, (key, value) in enumerate(manifest_rows, 1):
+        manifest.cell(row=row_i, column=1, value=key)
+        manifest.cell(row=row_i, column=2, value=value)
+        for cell in manifest[row_i]:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.border = border
+        manifest.row_dimensions[row_i].height = 28
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -239,11 +354,20 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict, segments: di
                 return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
         return ""
 
+    def esc(value):
+        return html.escape(_safe(value))
+
+    def json_pre(value):
+        dumped = _json_dump(value)
+        return html.escape(dumped) if dumped else "—"
+
     shot_cards = ""
     for shot in shots:
         a = shot.get("analysis") or {}
         nl = a.get("narrative_level") or {}
         audio = a.get("audio") or {}
+        audio_continuity = a.get("audio_continuity") or {}
+        action_continuity = a.get("action_continuity") or {}
         thumb = thumb_b64(shot.get("thumbnail_path"))
         img_tag = f'<img src="{thumb}" class="thumb">' if thumb else '<div class="no-thumb">无缩略图</div>'
 
@@ -255,35 +379,52 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict, segments: di
       <h3>镜头 #{shot.get('index',0)+1}</h3>
       <p>时长：{shot.get('duration',0):.1f}s &nbsp;|&nbsp;
          {shot.get('start_time',0):.1f}s → {shot.get('end_time',0):.1f}s</p>
-      <p><b>景别：</b>{_safe(a.get('shot_scale'))} &nbsp;
-         <b>运镜：</b>{_safe(a.get('camera_movement'))}</p>
-      <p><b>光影：</b>{_safe(a.get('lighting'))}</p>
-      <p><b>色调：</b>{_safe(a.get('color_tone'))}</p>
-      {f"<p><b>分析方式：</b>{_analysis_source_label(a)} &nbsp; <b>合并镜头：</b>{_safe([i + 1 for i in a.get('analysis_shot_indices', [])])}</p>" if a.get('analysis_mode') == 'merged_context' else f"<p><b>分析方式：</b>{_analysis_source_label(a)}</p>"}
+      <p><b>景别：</b>{esc(a.get('shot_scale'))} &nbsp;
+         <b>运镜：</b>{esc(a.get('camera_movement'))}</p>
+      <p><b>光影：</b>{esc(a.get('lighting'))}</p>
+      <p><b>色调：</b>{esc(a.get('color_tone'))}</p>
+      <p><b>画面文字：</b>{esc(a.get('on_screen_text'))}</p>
+      <p><b>时间证据：</b>{esc(a.get('time_evidence'))}</p>
+      {f"<p><b>分析方式：</b>{esc(_analysis_source_label(a))} &nbsp; <b>合并镜头：</b>{esc([i + 1 for i in a.get('analysis_shot_indices', [])])}</p>" if a.get('analysis_mode') == 'merged_context' else f"<p><b>分析方式：</b>{esc(_analysis_source_label(a))}</p>"}
     </div>
   </div>
   <div class="analysis-body">
+    <p><b>画面描述：</b>{esc(a.get('content_description'))}</p>
     <div class="why-block">
-      <div class="label">WHAT</div><div class="content">{_safe(a.get('what'))}</div>
-      <div class="label">HOW</div><div class="content">{_safe(a.get('how'))}</div>
-      <div class="label">WHY</div><div class="content why-text">{_safe(a.get('why'))}</div>
+      <div class="label">WHAT</div><div class="content">{esc(a.get('what'))}</div>
+      <div class="label">HOW</div><div class="content">{esc(a.get('how'))}</div>
+      <div class="label">WHY</div><div class="content why-text">{esc(a.get('why'))}</div>
     </div>
     <div class="narrative-block">
       <b>叙事层级</b>
-      <p>场景：{_safe(nl.get('scene'))}</p>
-      <p>事件：{_safe(nl.get('event'))}</p>
-      <p>信息：{_safe(nl.get('information'))}</p>
+      <p>场景：{esc(nl.get('scene'))}</p>
+      <p>事件：{esc(nl.get('event'))}</p>
+      <p>信息：{esc(nl.get('information'))}</p>
     </div>
     <div class="narrative-block">
       <b>声音</b>
-      <p>台词：{_safe(audio.get('dialogue'))}</p>
-      <p>声音类型：{_safe(audio.get('sound_type'))}</p>
-      <p>声画关系：{_safe(a.get('audiovisual_sync'))}</p>
-      <p>声音叙事：{_safe(a.get('audio_narrative_role'))}</p>
+      <p>台词：{esc(audio.get('dialogue') or a.get('dialogue'))}</p>
+      <p>说话者/声线：{esc(audio.get('speaker'))}</p>
+      <p>声音类型：{esc(audio.get('sound_type'))}</p>
+      <p>音乐：{esc(audio.get('music'))}</p>
+      <p>环境声：{esc(audio.get('ambient_sound'))}</p>
+      <p>人声情绪：{esc(audio.get('speaker_emotion'))}</p>
+      <p>台词时间戳：{esc(audio.get('transcript_timestamps'))}</p>
+      <p>声画关系：{esc(a.get('audiovisual_sync'))}</p>
+      <p>声音叙事：{esc(a.get('audio_narrative_role'))}</p>
     </div>
-    <p><b>情绪功能：</b>{_safe(a.get('emotional_function'))}</p>
-    <p><b>叙事决策：</b>{_safe(a.get('narrative_decision'))}</p>
-    <p><b>节奏贡献：</b>{_safe(a.get('rhythm_contribution'))}</p>
+    <div class="narrative-block">
+      <b>跨镜头连续性</b>
+      <p>声音承前/启后：{esc(audio_continuity.get('continues_from_previous'))} / {esc(audio_continuity.get('continues_to_next'))}</p>
+      <p>台词未完：{esc(audio_continuity.get('unfinished_dialogue'))}</p>
+      <p>声音说明：{esc(audio_continuity.get('notes'))}</p>
+      <p>动作承前/启后：{esc(action_continuity.get('continues_from_previous'))} / {esc(action_continuity.get('continues_to_next'))}</p>
+      <p>动作说明：{esc(action_continuity.get('notes'))}</p>
+    </div>
+    <p><b>情绪功能：</b>{esc(a.get('emotional_function'))}</p>
+    <p><b>叙事决策：</b>{esc(a.get('narrative_decision'))}</p>
+    <p><b>节奏贡献：</b>{esc(a.get('rhythm_contribution'))}</p>
+    <details open><summary>完整镜头分析 JSON</summary><pre>{json_pre(a)}</pre></details>
   </div>
 </div>"""
 
@@ -294,20 +435,21 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict, segments: di
         for segment in segment_rows:
             cards += f"""
   <div class="segment-card">
-    <h3>{_safe(segment.get('title'), '段落')}</h3>
-    <p><b>镜头：</b>{_safe([int(i) + 1 for i in segment.get('shot_indices', [])])} &nbsp; <b>类型：</b>{_safe(segment.get('segment_type'))}</p>
-    <p><b>摘要：</b>{_safe(segment.get('summary'))}</p>
-    <p><b>合并原因：</b>{_safe(segment.get('merge_reason'))}</p>
-    <p><b>声音连续：</b>{_safe(segment.get('audio_continuity'))}</p>
-    <p><b>动作连续：</b>{_safe(segment.get('action_continuity'))}</p>
-    <p><b>剪辑逻辑：</b>{_safe(segment.get('editing_logic'))}</p>
-    <p><b>情绪推进：</b>{_safe(segment.get('emotional_arc'))}</p>
-    <p><b>叙事功能：</b>{_safe(segment.get('narrative_function'))}</p>
+    <h3>{esc(segment.get('title') or '段落')}</h3>
+    <p><b>镜头：</b>{esc([int(i) + 1 for i in segment.get('shot_indices', [])])} &nbsp; <b>类型：</b>{esc(segment.get('segment_type'))}</p>
+    <p><b>摘要：</b>{esc(segment.get('summary'))}</p>
+    <p><b>合并原因：</b>{esc(segment.get('merge_reason'))}</p>
+    <p><b>声音连续：</b>{esc(segment.get('audio_continuity'))}</p>
+    <p><b>动作连续：</b>{esc(segment.get('action_continuity'))}</p>
+    <p><b>剪辑逻辑：</b>{esc(segment.get('editing_logic'))}</p>
+    <p><b>情绪推进：</b>{esc(segment.get('emotional_arc'))}</p>
+    <p><b>叙事功能：</b>{esc(segment.get('narrative_function'))}</p>
+    <details open><summary>完整段落分析 JSON</summary><pre>{json_pre(segment)}</pre></details>
   </div>"""
         segments_html = f"""
 <div class="section">
   <h2>段落分析</h2>
-  <p style="color:#6b7280;margin-bottom:10px">来源：{_safe((segments or {}).get('strategy'))}；{_safe((segments or {}).get('reason'))}</p>
+  <p style="color:#6b7280;margin-bottom:10px">来源：{esc((segments or {}).get('strategy'))}；{esc((segments or {}).get('reason'))}</p>
   {cards}
 </div>"""
 
@@ -320,19 +462,20 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict, segments: di
 <div class="section">
   <h2>整体分析</h2>
   <h3>连贯性</h3>
-  <p><b>景别流动：</b>{_safe(c.get('shot_scale_flow'))}</p>
-  <p><b>运镜衔接：</b>{_safe(c.get('movement_coherence'))}</p>
-  <p><b>情绪弧线：</b>{_safe(c.get('emotional_arc'))}</p>
-  <p><b>色调连续：</b>{_safe(c.get('color_continuity'))}</p>
-  <p><b>声音弧线：</b>{_safe(c.get('audio_arc'))}</p>
+  <p><b>景别流动：</b>{esc(c.get('shot_scale_flow'))}</p>
+  <p><b>运镜衔接：</b>{esc(c.get('movement_coherence'))}</p>
+  <p><b>情绪弧线：</b>{esc(c.get('emotional_arc'))}</p>
+  <p><b>色调连续：</b>{esc(c.get('color_continuity'))}</p>
+  <p><b>声音弧线：</b>{esc(c.get('audio_arc'))}</p>
   <h3>节奏</h3>
-  <p><b>平均镜头时长：</b>{r.get('avg_shot_duration','—')}s</p>
-  <p><b>节奏评估：</b>{_safe(r.get('pacing_assessment'))}</p>
-  <p><b>信息密度：</b>{_safe(r.get('info_density_pattern'))}</p>
+  <p><b>平均镜头时长：</b>{esc(r.get('avg_shot_duration','—'))}s</p>
+  <p><b>节奏评估：</b>{esc(r.get('pacing_assessment'))}</p>
+  <p><b>信息密度：</b>{esc(r.get('info_density_pattern'))}</p>
   <h3>叙事结构</h3>
-  <p><b>推测类型：</b>{_safe(n.get('detected_genre'))}</p>
-  <p><b>三幕结构：</b>{_safe(n.get('three_act'))}</p>
-  <p><b>信息揭示策略：</b>{_safe(n.get('information_release_strategy'))}</p>
+  <p><b>推测类型：</b>{esc(n.get('detected_genre'))}</p>
+  <p><b>三幕结构：</b>{esc(n.get('three_act'))}</p>
+  <p><b>信息揭示策略：</b>{esc(n.get('information_release_strategy'))}</p>
+  <details open><summary>完整整体分析 JSON</summary><pre>{json_pre(analysis)}</pre></details>
 </div>"""
 
     return f"""<!DOCTYPE html>
@@ -369,6 +512,9 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict, segments: di
   .narrative-block b {{ color: #166534; }}
   .section {{ background: white; border-radius: 8px; padding: 16px; margin-top: 20px; }}
   .segment-card {{ break-inside: avoid; border: 1px solid #e5e7eb; border-left: 4px solid #0ea5e9; border-radius: 8px; padding: 10px; margin: 10px 0; background: #f8fbff; }}
+  details {{ margin-top: 8px; }}
+  summary {{ color: #4338ca; font-weight: bold; margin-bottom: 4px; }}
+  pre {{ white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 9px; line-height: 1.35; background: #f3f4f6; color: #111827; border-radius: 6px; padding: 8px; }}
   p {{ margin: 3px 0; line-height: 1.5; }}
 </style>
 </head>
