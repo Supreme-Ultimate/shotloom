@@ -19,6 +19,16 @@ function Row({ label, value }: { label: string; value?: string | string[] | bool
 }
 
 
+
+function sourceLabel(source?: string, mode?: string) {
+  const key = source || mode
+  if (key === 'whole_video' || mode === 'whole_video_context') return '整片上下文'
+  if (key === 'chunk_segment' || mode === 'chunk_segment_context') return '分块上下文'
+  if (key === 'merged_context' || mode === 'merged_context') return '合并上下文'
+  if (key === 'shot_clip' || mode === 'shot_clip') return '单镜头回退'
+  return key || ''
+}
+
 function formatShotRange(indices?: number[]) {
   if (!indices?.length) return ''
   return indices.map(i => `#${i + 1}`).join('、')
@@ -91,6 +101,12 @@ export default function ShotDetailPanel({ shot, videoId }: Props) {
 
       {a && !hasError && (
         <>
+          {(a.analysis_source || a.analysis_mode) && (
+            <div className="mb-3 inline-flex rounded-full border border-sky-700/60 bg-sky-950/30 px-2 py-1 text-[11px] text-sky-200">
+              分析来源：{sourceLabel(a.analysis_source, a.analysis_mode)}
+            </div>
+          )}
+
           {a.analysis_mode === 'merged_context' && (
             <div className="mb-4 rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 text-xs text-amber-100">
               <div className="mb-1 font-semibold text-amber-300">合并上下文分析</div>
@@ -135,6 +151,18 @@ export default function ShotDetailPanel({ shot, videoId }: Props) {
               <Row label="人声情绪" value={a.audio.speaker_emotion} />
               <Row label="声画关系" value={a.audiovisual_sync} />
               <Row label="声音叙事" value={a.audio_narrative_role} />
+            </Section>
+          )}
+
+          {(a.audio_continuity || a.action_continuity) && (
+            <Section title="跨镜头连续性">
+              <Row label="声音承前" value={a.audio_continuity?.continues_from_previous} />
+              <Row label="声音启后" value={a.audio_continuity?.continues_to_next} />
+              <Row label="台词未完" value={a.audio_continuity?.unfinished_dialogue} />
+              <Row label="声音说明" value={a.audio_continuity?.notes} />
+              <Row label="动作承前" value={a.action_continuity?.continues_from_previous} />
+              <Row label="动作启后" value={a.action_continuity?.continues_to_next} />
+              <Row label="动作说明" value={a.action_continuity?.notes} />
             </Section>
           )}
 

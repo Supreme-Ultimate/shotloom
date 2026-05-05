@@ -6,6 +6,7 @@ import ShotList from '../components/ShotList'
 import ShotDetailPanel from '../components/ShotDetailPanel'
 import ShotTimeline from '../components/ShotTimeline'
 import ContinuityReport from '../components/ContinuityReport'
+import SegmentReport from '../components/SegmentReport'
 import { useSSEProgress } from '../hooks/useSSEProgress'
 import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
 
@@ -14,7 +15,7 @@ interface Props {
   onBack: () => void
 }
 
-type RightTab = 'detail' | 'continuity'
+type RightTab = 'detail' | 'segments' | 'continuity'
 
 function ProgressBar({ progress }: { progress: TaskProgress }) {
   const labels: Record<string, string> = {
@@ -59,6 +60,7 @@ function updateAnalysisState(
   status: AnalysisResult['video']['status'],
   shots: Shot[],
   overallAnalysis: AnalysisResult['overall_analysis'] = result.overall_analysis,
+  segments: AnalysisResult['segments'] = result.segments,
 ): AnalysisResult {
   return {
     ...result,
@@ -68,6 +70,7 @@ function updateAnalysisState(
     },
     shots,
     overall_analysis: overallAnalysis,
+    segments,
   }
 }
 
@@ -585,7 +588,7 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
         {/* 右栏：详情 / 整体分析 */}
         <div className="flex-shrink-0 border-l border-gray-800 flex flex-col overflow-hidden" style={{ width: `${rightWidth}px` }}>
           <div className="flex border-b border-gray-800 flex-shrink-0">
-            {(['detail', 'continuity'] as RightTab[]).map((tab) => (
+            {(['detail', 'segments', 'continuity'] as RightTab[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setRightTab(tab)}
@@ -593,13 +596,15 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
                   rightTab === tab ? 'text-indigo-300 border-b-2 border-indigo-500 bg-indigo-950/20' : 'text-gray-500 hover:text-gray-300'
                 }`}
               >
-                {tab === 'detail' ? '镜头详情' : '整体分析'}
+                {tab === 'detail' ? '镜头详情' : tab === 'segments' ? '段落分析' : '整体分析'}
               </button>
             ))}
           </div>
           <div className="flex-1 overflow-hidden flex flex-col">
             {rightTab === 'detail' ? (
               <ShotDetailPanel shot={selectedShot} videoId={videoId} />
+            ) : rightTab === 'segments' ? (
+              <SegmentReport report={data?.segments} />
             ) : (
               <>
                 <div className="flex-shrink-0 px-4 py-2 border-b border-gray-800">

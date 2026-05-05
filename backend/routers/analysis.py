@@ -18,10 +18,11 @@ from database import get_db, Video, Shot, VideoAnalysis, User
 from services.shot_detector import detect_shots
 from services.clip_extractor import extract_shot_clips
 from services.ai_analyzer import analyze_shot, build_merged_analysis_unit
+from services.context_analyzer import analyze_chunked_context, analyze_whole_video_context, choose_analysis_strategy
 from services.continuity_analyzer import analyze_continuity
 from services.credits_service import check_sufficient, deduct
 from auth import get_current_user
-from config import REDIS_URL, RUN_TASKS_INLINE, SCENE_THRESHOLD, TASK_QUEUE_NAME, TASK_STALE_MINUTES, SAFE_MODEL_VIDEO_DURATION
+from config import REDIS_URL, RUN_TASKS_INLINE, SCENE_THRESHOLD, TASK_QUEUE_NAME, TASK_STALE_MINUTES, SAFE_MODEL_VIDEO_DURATION, SHOTS_DIR, SHOT_FALLBACK_ENABLED
 from logger import app_logger
 from permissions import get_video_for_user
 from task_store import cancel_task, create_task, get_task_progress, is_task_cancelled, reconcile_active_task, update_task
@@ -323,6 +324,10 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
     try:
         app_logger.info(f"后台分析任务开始: video_id={video_id}, task_id={task_id}")
         video = db.query(Video).filter(Video.id == video_id).first()
+        if not video:
+            update_task(task_id, "error", msg="视频不存在")
+            return
+
         shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
 
         # 筛选要分析的镜头
@@ -332,8 +337,11 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             shots_to_analyze = shots
 
         total = len(shots_to_analyze)
+        if total <= 0:
+            update_task(task_id, "error", msg="没有可分析的镜头")
+            return
 
-        # --- 切割镜头片段（仅切割需要分析的镜头）---
+        # --- 切割镜头片段（保留原逻辑，便于上下文缺失时回退到单镜头分析）---
         if is_task_cancelled(task_id):
             app_logger.info(f"分析任务已取消，跳过切片: video_id={video_id}, task_id={task_id}")
             return
@@ -342,7 +350,6 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
 
         from services.shot_detector import ShotBoundary
 
-        # 只切割需要分析的镜头（如果还没有 clip_path）
         shots_to_cut = [s for s in shots_to_analyze if not s.clip_path]
         if shots_to_cut:
             boundaries = [
@@ -363,22 +370,30 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                 shot.thumbnail_path = thumb_path
             db.commit()
 
-        # --- 逐镜 AI 分析 ---
         if is_task_cancelled(task_id):
             app_logger.info(f"分析任务已取消，跳过 AI 分析: video_id={video_id}, task_id={task_id}")
             return
-        update_task(task_id, "analyzing", done=0, total=total)
-        app_logger.info(f"[进度更新] 开始 AI 分析: video_id={video_id}, total={total}, task_id={task_id}")
 
-        # 使用字典而不是简单变量，避免 nonlocal 的问题
+        strategy = choose_analysis_strategy(video.duration, len(shots), len(shots_to_analyze) if shot_indices is not None else None, video.filepath)
+        update_task(task_id, "analyzing", done=0, total=total, msg=f"AI 分析中：{strategy.mode}")
+        app_logger.info(
+            f"[分析路由] video_id={video_id}, mode={strategy.mode}, reason={strategy.reason}, "
+            f"shots={len(shots)}, selected={len(shots_to_analyze)}"
+        )
+
         progress_state = {"done": 0}
         progress_lock = asyncio.Lock()
+        analyzed_indices: set[int] = set()
+
+        def mark_context_done(count: int, message: str | None = None):
+            progress_state["done"] = min(total, progress_state["done"] + count)
+            update_task(task_id, "analyzing", done=progress_state["done"], total=total, msg=message)
 
         async def analyze_one(shot):
             if is_task_cancelled(task_id):
                 app_logger.info(f"[分析跳过] 任务已取消，镜头 {shot.index} 不再启动")
                 return
-            app_logger.info(f"[分析开始] 镜头 {shot.index} 开始分析")
+            app_logger.info(f"[分析开始] 镜头 {shot.index} 开始回退分析")
             try:
                 if not shot.clip_path or not Path(shot.clip_path).exists():
                     raise ValueError("切片失败：未生成可分析的视频片段，请重新检测或调整镜头边界后再分析")
@@ -400,20 +415,20 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                     end_time=shot.end_time,
                     analysis_unit=analysis_unit,
                 )
+                result.setdefault("analysis_source", result.get("analysis_mode") or "shot_clip")
+                result.setdefault("analysis_mode", result.get("analysis_mode") or "shot_clip")
                 shot.analysis = result
-                app_logger.info(f"[分析成功] 镜头 {shot.index} 分析成功")
+                app_logger.info(f"[分析成功] 镜头 {shot.index} 回退分析成功")
             except Exception as e:
-                shot.analysis = {"error": str(e)}
+                shot.analysis = {"error": str(e), "analysis_source": "shot_clip", "analysis_mode": "shot_clip"}
                 app_logger.error(f"[分析失败] 镜头 {shot.index} 分析失败: {e}")
 
-            # 先提交数据库
             try:
                 db.commit()
                 app_logger.info(f"[数据库提交] 镜头 {shot.index} 数据已保存")
             except Exception as e:
                 app_logger.error(f"[数据库错误] 镜头 {shot.index} 提交失败: {e}")
 
-            # 更新进度（使用字典确保正确更新）
             async with progress_lock:
                 if is_task_cancelled(task_id):
                     return
@@ -422,22 +437,79 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                 update_task(task_id, "analyzing", done=current_done, total=total)
                 app_logger.info(f"[进度更新] 镜头 {shot.index} 完成，进度: {current_done}/{total}, task_id={task_id}")
 
-        # 并发执行（Semaphore 在 ai_analyzer 内控制）
-        app_logger.info(f"[并发执行] 开始并发分析 {len(shots_to_analyze)} 个镜头")
-        await asyncio.gather(*[analyze_one(s) for s in shots_to_analyze])
-        app_logger.info(f"[并发完成] 所有镜头分析完成，最终进度: {progress_state['done']}/{total}")
+        async def run_fallback_for(missing_shots):
+            if not missing_shots:
+                return
+            if not SHOT_FALLBACK_ENABLED:
+                for shot in missing_shots:
+                    shot.analysis = {"error": "上下文分析未返回该镜头结果，且单镜头回退已关闭", "analysis_source": strategy.mode, "analysis_mode": strategy.mode}
+                db.commit()
+                mark_context_done(len(missing_shots), "部分镜头未返回，已记录错误")
+                return
+            app_logger.info(f"[回退分析] {len(missing_shots)} 个镜头缺少上下文结果，使用单镜头/合并上下文回退")
+            await asyncio.gather(*[analyze_one(s) for s in missing_shots])
+
+        if strategy.mode in ("whole_video", "chunk_segment"):
+            context_failed = False
+            context_result = {"shots": {}, "segments": []}
+            try:
+                if strategy.mode == "whole_video":
+                    context_result = await analyze_whole_video_context(video.filepath, shots_to_analyze)
+                else:
+                    context_result = await analyze_chunked_context(video.filepath, shots_to_analyze, SHOTS_DIR)
+            except Exception as e:
+                context_failed = True
+                app_logger.error(f"[上下文分析失败] video_id={video_id}, mode={strategy.mode}, error={e}", exc_info=True)
+
+            if not context_failed:
+                shot_results = context_result.get("shots") or {}
+                for shot in shots_to_analyze:
+                    result = shot_results.get(shot.index)
+                    if not result:
+                        continue
+                    result.setdefault("analysis_source", strategy.mode)
+                    result.setdefault("analysis_mode", "whole_video_context" if strategy.mode == "whole_video" else "chunk_segment_context")
+                    shot.analysis = result
+                    analyzed_indices.add(shot.index)
+                db.commit()
+
+                existing = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+                if not existing:
+                    existing = VideoAnalysis(video_id=video_id)
+                    db.add(existing)
+                existing.segments_report = {
+                    "strategy": strategy.mode,
+                    "reason": strategy.reason,
+                    "shot_count": len(shots_to_analyze),
+                    "segments": context_result.get("segments") or [],
+                }
+                db.commit()
+
+                mark_context_done(len(analyzed_indices), f"上下文分析完成：{len(analyzed_indices)}/{total}")
+
+            if is_task_cancelled(task_id):
+                app_logger.info(f"分析任务已取消，保留已完成结果: video_id={video_id}, task_id={task_id}")
+                return
+
+            missing_shots = [s for s in shots_to_analyze if s.index not in analyzed_indices]
+            if context_failed:
+                missing_shots = shots_to_analyze
+            await run_fallback_for(missing_shots)
+        else:
+            app_logger.info(f"[并发执行] 开始单镜头/短镜头合并分析 {len(shots_to_analyze)} 个镜头")
+            await asyncio.gather(*[analyze_one(s) for s in shots_to_analyze])
+            app_logger.info(f"[并发完成] 所有镜头分析完成，最终进度: {progress_state['done']}/{total}")
 
         if is_task_cancelled(task_id):
             app_logger.info(f"分析任务已取消，保留已完成结果: video_id={video_id}, task_id={task_id}")
             return
 
-        # 镜头分析完成，不自动执行整体分析
+        # 镜头分析完成，不自动执行整体分析；整体分析仍由用户按需触发。
         video.status = "completed"
         video.current_task_id = None
-        db.commit()  # 先提交视频状态
+        db.commit()
         app_logger.info(f"视频状态已更新为 completed: video_id={video_id}")
 
-        # 按实际镜头数扣除积分
         if user_id:
             try:
                 deduct(user_id, total, video_id, db)
@@ -445,22 +517,20 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             except Exception as e:
                 app_logger.error(f"积分扣除失败: user_id={user_id} | 错误: {e}")
 
-        # 确保所有数据库操作完成后再发送完成消息
-        db.commit()  # 再次提交，确保积分扣除也已保存
+        db.commit()
         app_logger.info(f"所有数据库操作已完成: video_id={video_id}")
 
-        # 最后发送 SSE 完成消息
         update_task(task_id, "completed", done=total, total=total)
         app_logger.info(f"[进度更新] 分析任务完成: video_id={video_id}, task_id={task_id}")
 
     except Exception as e:
-        app_logger.error(f"分析任务失败: video_id={video_id}, task_id={task_id} | 错误: {e}")
+        app_logger.error(f"分析任务失败: video_id={video_id}, task_id={task_id} | 错误: {e}", exc_info=True)
         update_task(task_id, "error", msg=str(e))
         video = db.query(Video).filter(Video.id == video_id).first()
         if video:
             video.status = "error"
             video.error_msg = str(e)
-            video.current_task_id = None  # 清除任务 ID
+            video.current_task_id = None
             db.commit()
     finally:
         db.close()

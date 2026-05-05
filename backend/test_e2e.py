@@ -40,7 +40,7 @@ config.RUN_TASKS_INLINE = True
 import database
 database.engine = TEST_ENGINE
 database.SessionLocal = TestingSession
-from database import Base, get_db, User, Video, Shot, Credits, CreditTransaction, AnalysisTask
+from database import Base, get_db, User, Video, Shot, VideoAnalysis, Credits, CreditTransaction, AnalysisTask
 from main import app
 import routers.analysis as analysis_router
 
@@ -755,6 +755,146 @@ class TestAnalysisWorkerGuards:
         try:
             stored = db.query(Shot).filter(Shot.video_id == video_id, Shot.index == 0).first()
             assert "切片失败" in stored.analysis["error"]
+        finally:
+            db.close()
+
+
+class TestContextAnalyzer:
+    def _shots(self, count=4, duration=4.0):
+        from types import SimpleNamespace
+        return [
+            SimpleNamespace(index=i, start_time=i * duration, end_time=(i + 1) * duration, duration=duration)
+            for i in range(count)
+        ]
+
+    def test_choose_strategy_whole_video_for_short_video(self):
+        from services.context_analyzer import choose_analysis_strategy
+
+        strategy = choose_analysis_strategy(30.0, 3)
+
+        assert strategy.mode == "whole_video"
+
+    def test_choose_strategy_selected_subset_uses_fallback(self):
+        from services.context_analyzer import choose_analysis_strategy
+
+        strategy = choose_analysis_strategy(30.0, 5, selected_count=2)
+
+        assert strategy.mode == "shot_fallback"
+
+    def test_build_shot_chunks_respects_overlap(self):
+        from services.context_analyzer import build_shot_chunks
+
+        chunks = build_shot_chunks(self._shots(5, duration=2.0), max_duration=5.0, max_shots=3, overlap_shots=1)
+
+        assert [[s.index for s in chunk] for chunk in chunks] == [[0, 1], [1, 2], [2, 3], [3, 4]]
+
+    def test_normalize_context_indices_are_zero_based(self):
+        from services.context_analyzer import _normalize_segment, _normalize_shot_result
+
+        idx, analysis = _normalize_shot_result({"shot_index": 1, "what": "b"}, "whole_video")
+        segment = _normalize_segment({"shot_indices": [0, 1], "summary": "s"}, "whole_video")
+
+        assert idx == 1
+        assert analysis["analysis_source"] == "whole_video"
+        assert segment["shot_indices"] == [0, 1]
+
+
+class TestContextAnalysisWorker:
+    def _create_context_video(self, user_id: int, shot_count: int = 2) -> int:
+        db = get_db_session()
+        try:
+            video = Video(
+                user_id=user_id,
+                filename="context.mp4",
+                filepath="/tmp/context.mp4",
+                duration=20.0,
+                fps=25.0,
+                status="detected",
+            )
+            db.add(video)
+            db.flush()
+            for i in range(shot_count):
+                db.add(Shot(
+                    video_id=video.id,
+                    index=i,
+                    start_time=float(i * 5),
+                    end_time=float(i * 5 + 4),
+                    duration=4.0,
+                    clip_path=f"/tmp/context_{i}.mp4",
+                ))
+            db.commit()
+            return video.id
+        finally:
+            db.close()
+
+    def test_worker_saves_whole_video_context_and_segments(self):
+        r = register("context_worker@example.com")
+        user_id = r.json()["user_id"]
+        video_id = self._create_context_video(user_id, shot_count=2)
+        from task_store import create_task, get_task_progress
+        create_task("context_task", video_id, user_id, 2, None)
+
+        async def fake_context(_path, _shots):
+            return {
+                "shots": {
+                    0: {"what": "A", "analysis_source": "whole_video"},
+                    1: {"what": "B", "analysis_source": "whole_video"},
+                },
+                "segments": [{"segment_index": 0, "shot_indices": [0, 1], "summary": "AB"}],
+            }
+
+        with (
+            patch.object(analysis_router, "choose_analysis_strategy", return_value=type("S", (), {"mode": "whole_video", "reason": "test"})()),
+            patch.object(analysis_router, "analyze_whole_video_context", side_effect=fake_context),
+            patch.object(analysis_router, "analyze_shot") as analyze_mock,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            import asyncio
+            asyncio.run(ORIGINAL_RUN_ANALYSIS(video_id, "context_task", user_id))
+            analyze_mock.assert_not_called()
+
+        db = get_db_session()
+        try:
+            shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
+            va = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+            assert [shot.analysis["what"] for shot in shots] == ["A", "B"]
+            assert va.segments_report["strategy"] == "whole_video"
+            assert va.segments_report["segments"][0]["shot_indices"] == [0, 1]
+            assert get_task_progress("context_task")["stage"] == "completed"
+        finally:
+            db.close()
+
+    def test_worker_falls_back_for_missing_context_shot(self):
+        r = register("context_fallback@example.com")
+        user_id = r.json()["user_id"]
+        video_id = self._create_context_video(user_id, shot_count=2)
+        from task_store import create_task
+        create_task("context_fallback_task", video_id, user_id, 2, None)
+
+        async def fake_context(_path, _shots):
+            return {
+                "shots": {0: {"what": "A", "analysis_source": "whole_video"}},
+                "segments": [],
+            }
+
+        async def fake_analyze_shot(**_kwargs):
+            return {"what": "fallback", "analysis_mode": "shot_clip"}
+
+        with (
+            patch.object(analysis_router, "choose_analysis_strategy", return_value=type("S", (), {"mode": "whole_video", "reason": "test"})()),
+            patch.object(analysis_router, "analyze_whole_video_context", side_effect=fake_context),
+            patch.object(analysis_router, "analyze_shot", side_effect=fake_analyze_shot) as analyze_mock,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            import asyncio
+            asyncio.run(ORIGINAL_RUN_ANALYSIS(video_id, "context_fallback_task", user_id))
+            assert analyze_mock.call_count == 1
+
+        db = get_db_session()
+        try:
+            shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
+            assert shots[0].analysis["what"] == "A"
+            assert shots[1].analysis["what"] == "fallback"
         finally:
             db.close()
 

@@ -45,6 +45,7 @@ def export_report(
             for s in shots
         ]
         analysis_dict = va.continuity_report if va else {}
+        segments_dict = va.segments_report if va else {}
 
         name = video.filename.rsplit(".", 1)[0]
 
@@ -53,7 +54,7 @@ def export_report(
 
         if format == "excel":
             app_logger.info("生成 Excel 文件")
-            data = export_excel(video_dict, shots_list, analysis_dict)
+            data = export_excel(video_dict, shots_list, analysis_dict, segments_dict)
             app_logger.info(f"Excel 生成成功，大小: {len(data)} bytes")
             encoded_filename = quote(f"{name}_拉片报告.xlsx")
             return Response(
@@ -67,7 +68,7 @@ def export_report(
             except ImportError:
                 raise HTTPException(500, "WeasyPrint 未安装，请运行: pip install weasyprint")
             app_logger.info("生成 PDF 文件")
-            html_str = export_pdf_html(video_dict, shots_list, analysis_dict)
+            html_str = export_pdf_html(video_dict, shots_list, analysis_dict, segments_dict)
             pdf_bytes = HTML(string=html_str).write_pdf()
             app_logger.info(f"PDF 生成成功，大小: {len(pdf_bytes)} bytes")
             encoded_filename = quote(f"{name}_拉片报告.pdf")

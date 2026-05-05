@@ -45,6 +45,7 @@ def get_results(
             for s in shots
         ],
         "overall_analysis": va.continuity_report if va else None,
+        "segments": va.segments_report if va else None,
     }
 
 

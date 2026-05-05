@@ -107,6 +107,7 @@ class VideoAnalysis(Base):
     video_id = Column(Integer, nullable=False, unique=True, index=True)
     _continuity_report = Column("continuity_report", Text, nullable=True)
     _rhythm_report = Column("rhythm_report", Text, nullable=True)
+    _segments_report = Column("segments_report", Text, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
     @property
@@ -124,6 +125,14 @@ class VideoAnalysis(Base):
     @rhythm_report.setter
     def rhythm_report(self, value):
         self._rhythm_report = json.dumps(value, ensure_ascii=False) if value else None
+
+    @property
+    def segments_report(self):
+        return json.loads(self._segments_report) if self._segments_report else None
+
+    @segments_report.setter
+    def segments_report(self, value):
+        self._segments_report = json.dumps(value, ensure_ascii=False) if value else None
 
 
 # ─── 分析任务表 ─────────────────────────────────────────────────────────────────
@@ -163,6 +172,11 @@ def init_db():
         existing_cols = [c["name"] for c in inspector.get_columns("videos")] if "videos" in inspector.get_table_names() else []
         if "user_id" not in existing_cols and "videos" in inspector.get_table_names():
             conn.execute(text("ALTER TABLE videos ADD COLUMN user_id INTEGER REFERENCES users(id)"))
+            conn.commit()
+
+        analysis_cols = [c["name"] for c in inspector.get_columns("video_analyses")] if "video_analyses" in inspector.get_table_names() else []
+        if "segments_report" not in analysis_cols and "video_analyses" in inspector.get_table_names():
+            conn.execute(text("ALTER TABLE video_analyses ADD COLUMN segments_report TEXT"))
             conn.commit()
 
 

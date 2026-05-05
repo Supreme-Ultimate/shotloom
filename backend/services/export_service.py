@@ -20,7 +20,21 @@ def _safe(val, default="—"):
     return str(val)
 
 
-def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
+def _analysis_source_label(analysis: dict) -> str:
+    source = analysis.get("analysis_source") or analysis.get("analysis_mode")
+    mode = analysis.get("analysis_mode")
+    if source == "whole_video" or mode == "whole_video_context":
+        return "整片上下文"
+    if source == "chunk_segment" or mode == "chunk_segment_context":
+        return "分块上下文"
+    if source == "merged_context" or mode == "merged_context":
+        return "合并上下文"
+    if source == "shot_clip" or mode == "shot_clip":
+        return "单镜头"
+    return _safe(source, "单镜头")
+
+
+def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict | None = None) -> bytes:
     wb = Workbook()
 
     # ── Sheet 1: 镜头分析 ──────────────────────────────
@@ -45,6 +59,7 @@ def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
         "情绪功能", "叙事决策", "节奏贡献",
         "台词", "声音类型", "声画关系", "声音叙事作用",
         "分析方式", "合并镜头", "合并段落分析",
+        "声音连续", "动作连续",
     ]
 
     ws.row_dimensions[1].height = 20
@@ -58,7 +73,7 @@ def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
     # 列宽
     col_widths = [12, 6, 8, 8, 8, 8, 8, 20, 18, 15,
                   30, 30, 35, 20, 25, 25, 18, 30, 15,
-                  25, 18, 20, 30, 14, 20, 40]
+                  25, 18, 20, 30, 14, 20, 40, 30, 30]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -66,6 +81,8 @@ def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
         a = shot.get("analysis") or {}
         nl = a.get("narrative_level") or {}
         audio = a.get("audio") or {}
+        audio_continuity = a.get("audio_continuity") or {}
+        action_continuity = a.get("action_continuity") or {}
         fill = alt_fill if row_i % 2 == 0 else PatternFill()
 
         ws.row_dimensions[row_i].height = 60
@@ -94,9 +111,11 @@ def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
             _safe(audio.get("sound_type")),
             _safe(a.get("audiovisual_sync")),
             _safe(a.get("audio_narrative_role")),
-            "合并上下文" if a.get("analysis_mode") == "merged_context" else "单镜头",
+            _analysis_source_label(a),
             _safe([i + 1 for i in a.get("analysis_shot_indices", [])]) if a.get("analysis_shot_indices") else "—",
             _safe(a.get("merged_segment_analysis")),
+            _safe(audio_continuity.get("notes")),
+            _safe(action_continuity.get("notes")),
         ]
 
         for col_i, val in enumerate(values, 1):
@@ -171,12 +190,47 @@ def export_excel(video: dict, shots: List[dict], analysis: dict) -> bytes:
                 v_cell.fill = header_fill2
             ws2.row_dimensions[r_i].height = max(15, min(120, len(str(v)) // 2))
 
+    segment_rows = (segments or {}).get("segments") or []
+    if segment_rows:
+        ws3 = wb.create_sheet("段落分析")
+        segment_headers = ["段落#", "镜头", "类型", "标题", "摘要", "合并原因", "声音连续", "动作连续", "剪辑逻辑", "情绪推进", "叙事功能"]
+        widths = [8, 18, 18, 24, 50, 50, 36, 36, 40, 36, 40]
+        for col, (header, width) in enumerate(zip(segment_headers, widths), 1):
+            cell = ws3.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = border
+            ws3.column_dimensions[get_column_letter(col)].width = width
+        for row_i, segment in enumerate(segment_rows, 2):
+            indices = [int(i) + 1 for i in segment.get("shot_indices", [])]
+            values = [
+                segment.get("segment_index", row_i - 2) + 1,
+                _safe(indices),
+                _safe(segment.get("segment_type")),
+                _safe(segment.get("title")),
+                _safe(segment.get("summary")),
+                _safe(segment.get("merge_reason")),
+                _safe(segment.get("audio_continuity")),
+                _safe(segment.get("action_continuity")),
+                _safe(segment.get("editing_logic")),
+                _safe(segment.get("emotional_arc")),
+                _safe(segment.get("narrative_function")),
+            ]
+            ws3.row_dimensions[row_i].height = 72
+            for col_i, val in enumerate(values, 1):
+                cell = ws3.cell(row=row_i, column=col_i, value=val)
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                cell.border = border
+                if row_i % 2 == 0:
+                    cell.fill = alt_fill
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
+def export_pdf_html(video: dict, shots: List[dict], analysis: dict, segments: dict | None = None) -> str:
     """生成 HTML 字符串，由 WeasyPrint 转 PDF"""
 
     def thumb_b64(path):
@@ -205,7 +259,7 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
          <b>运镜：</b>{_safe(a.get('camera_movement'))}</p>
       <p><b>光影：</b>{_safe(a.get('lighting'))}</p>
       <p><b>色调：</b>{_safe(a.get('color_tone'))}</p>
-      {f"<p><b>分析方式：</b>合并上下文 &nbsp; <b>合并镜头：</b>{_safe([i + 1 for i in a.get('analysis_shot_indices', [])])}</p>" if a.get('analysis_mode') == 'merged_context' else ""}
+      {f"<p><b>分析方式：</b>{_analysis_source_label(a)} &nbsp; <b>合并镜头：</b>{_safe([i + 1 for i in a.get('analysis_shot_indices', [])])}</p>" if a.get('analysis_mode') == 'merged_context' else f"<p><b>分析方式：</b>{_analysis_source_label(a)}</p>"}
     </div>
   </div>
   <div class="analysis-body">
@@ -231,6 +285,30 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
     <p><b>叙事决策：</b>{_safe(a.get('narrative_decision'))}</p>
     <p><b>节奏贡献：</b>{_safe(a.get('rhythm_contribution'))}</p>
   </div>
+</div>"""
+
+    segments_html = ""
+    segment_rows = (segments or {}).get("segments") or []
+    if segment_rows:
+        cards = ""
+        for segment in segment_rows:
+            cards += f"""
+  <div class="segment-card">
+    <h3>{_safe(segment.get('title'), '段落')}</h3>
+    <p><b>镜头：</b>{_safe([int(i) + 1 for i in segment.get('shot_indices', [])])} &nbsp; <b>类型：</b>{_safe(segment.get('segment_type'))}</p>
+    <p><b>摘要：</b>{_safe(segment.get('summary'))}</p>
+    <p><b>合并原因：</b>{_safe(segment.get('merge_reason'))}</p>
+    <p><b>声音连续：</b>{_safe(segment.get('audio_continuity'))}</p>
+    <p><b>动作连续：</b>{_safe(segment.get('action_continuity'))}</p>
+    <p><b>剪辑逻辑：</b>{_safe(segment.get('editing_logic'))}</p>
+    <p><b>情绪推进：</b>{_safe(segment.get('emotional_arc'))}</p>
+    <p><b>叙事功能：</b>{_safe(segment.get('narrative_function'))}</p>
+  </div>"""
+        segments_html = f"""
+<div class="section">
+  <h2>段落分析</h2>
+  <p style="color:#6b7280;margin-bottom:10px">来源：{_safe((segments or {}).get('strategy'))}；{_safe((segments or {}).get('reason'))}</p>
+  {cards}
 </div>"""
 
     overall_html = ""
@@ -290,6 +368,7 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
   .narrative-block {{ background: #f0fdf4; border-radius: 6px; padding: 8px; margin: 6px 0; }}
   .narrative-block b {{ color: #166534; }}
   .section {{ background: white; border-radius: 8px; padding: 16px; margin-top: 20px; }}
+  .segment-card {{ break-inside: avoid; border: 1px solid #e5e7eb; border-left: 4px solid #0ea5e9; border-radius: 8px; padding: 10px; margin: 10px 0; background: #f8fbff; }}
   p {{ margin: 3px 0; line-height: 1.5; }}
 </style>
 </head>
@@ -299,6 +378,7 @@ def export_pdf_html(video: dict, shots: List[dict], analysis: dict) -> str:
   时长：{video.get('duration',0):.1f}s &nbsp;|&nbsp; 共 {len(shots)} 个镜头
 </p>
 {shot_cards}
+{segments_html}
 {overall_html}
 </body>
 </html>"""

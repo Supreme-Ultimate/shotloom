@@ -136,6 +136,22 @@ CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 
 短镜头处理：原始镜头边界会保留；当镜头短于 `SAFE_MODEL_VIDEO_DURATION` 时，系统会自动向前/向后合并邻近镜头构造分析片段，并在结果中标记 `analysis_mode=merged_context`、合并范围和上下文镜头摘要。
+### 上下文分析路由配置
+
+ShotLoom 可以自动选择镜头级分析来源：短视频优先整片上下文，长视频自动分块段落，选中镜头重分析或上下文缺失时回退到单镜头/短镜头合并分析。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `ANALYSIS_ROUTER_MODE` | `auto` | 分析路由模式：`auto`、`whole_video`、`chunk_segment` 或 `shot_fallback`。 |
+| `WHOLE_VIDEO_MAX_DURATION` | `180` | 整片上下文分析最大时长（秒）。 |
+| `WHOLE_VIDEO_MAX_SHOTS` | `60` | 整片上下文分析最大镜头数。 |
+| `CHUNK_SEGMENT_DURATION` | `300` | 分块段落分析每块最大时长（秒）。 |
+| `CHUNK_SEGMENT_MAX_SHOTS` | `80` | 分块段落分析每块最大镜头数。 |
+| `CHUNK_SEGMENT_OVERLAP_SHOTS` | `2` | 相邻分块之间重叠的镜头数。 |
+| `SHOT_FALLBACK_ENABLED` | `true` | 上下文分析缺失镜头时是否自动回退到单镜头/短镜头合并分析。 |
+| `CONTEXT_BASE64_MAX_MB` | `8` | OpenAI 兼容本地 Base64 输入的整片大小保护（MB）。 |
+
+
 
 ### 自定义 Prompt 与分析字段
 

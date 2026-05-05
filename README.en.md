@@ -137,6 +137,23 @@ CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 Short-shot handling: original shot boundaries are preserved. When a shot is shorter than `SAFE_MODEL_VIDEO_DURATION`, ShotLoom automatically merges neighboring shots into a stable analysis clip and marks the result with `analysis_mode=merged_context`, merge bounds, and context-shot summaries.
 
+### Context Analysis Router
+
+ShotLoom can derive shot-level analysis from whole-video context for short videos, chunked segment context for longer videos, and shot-level fallback for selected reanalysis or missing context results.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ANALYSIS_ROUTER_MODE` | `auto` | Analysis router mode: `auto`, `whole_video`, `chunk_segment`, or `shot_fallback`. |
+| `WHOLE_VIDEO_MAX_DURATION` | `180` | Max duration in seconds for whole-video context analysis. |
+| `WHOLE_VIDEO_MAX_SHOTS` | `60` | Max shot count for whole-video context analysis. |
+| `CHUNK_SEGMENT_DURATION` | `300` | Max seconds per chunk for chunked segment analysis. |
+| `CHUNK_SEGMENT_MAX_SHOTS` | `80` | Max shots per chunk for chunked segment analysis. |
+| `CHUNK_SEGMENT_OVERLAP_SHOTS` | `2` | Overlapping shots between adjacent chunks. |
+| `SHOT_FALLBACK_ENABLED` | `true` | Fall back to shot-level analysis when context analysis misses shots. |
+| `CONTEXT_BASE64_MAX_MB` | `8` | Whole-video Base64 safety limit for OpenAI-compatible local file input. |
+
+
+
 ### Custom Prompts And Analysis Fields
 
 The default profile lives at `backend/prompt_configs/default.json`. Copy it and set `PROMPT_CONFIG_PATH` to your JSON file to customize:
