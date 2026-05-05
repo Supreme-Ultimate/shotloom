@@ -18,10 +18,11 @@ interface Props {
 type RightTab = 'detail' | 'segments' | 'continuity'
 
 function ProgressBar({ progress }: { progress: TaskProgress }) {
+  const analyzingLabel = progress.msg ?? `AI 分析中 ${progress.done ?? 0}/${progress.total ?? 0}`
   const labels: Record<string, string> = {
     starting: '初始化…',
     cutting_clips: '切割镜头片段…',
-    analyzing: `AI 分析中 ${progress.done ?? 0}/${progress.total ?? 0}`,
+    analyzing: analyzingLabel,
     continuity: '生成整体分析…',
     completed: '分析完成',
     error: `错误：${progress.msg}`,

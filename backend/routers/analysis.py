@@ -449,29 +449,56 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             app_logger.info(f"[回退分析] {len(missing_shots)} 个镜头缺少上下文结果，使用单镜头/合并上下文回退")
             await asyncio.gather(*[analyze_one(s) for s in missing_shots])
 
+        def apply_context_result(result: dict, source_mode: str) -> int:
+            written = 0
+            shot_results = result.get("shots") or {}
+            for shot in shots_to_analyze:
+                if shot.index in analyzed_indices:
+                    continue
+                analysis = shot_results.get(shot.index)
+                if not analysis:
+                    continue
+                analysis.setdefault("analysis_source", source_mode)
+                analysis.setdefault("analysis_mode", "whole_video_context" if source_mode == "whole_video" else "chunk_segment_context")
+                shot.analysis = analysis
+                analyzed_indices.add(shot.index)
+                written += 1
+            db.commit()
+            return written
+
+        async def on_chunk_complete(chunk_result: dict, _chunk: list, chunk_index: int, total_chunks: int):
+            written = apply_context_result(chunk_result, "chunk_segment")
+            update_task(
+                task_id,
+                "analyzing",
+                done=chunk_index + 1,
+                total=total_chunks,
+                msg=f"分块上下文分析 {chunk_index + 1}/{total_chunks}：已写入 {written} 个镜头",
+            )
+
         if strategy.mode in ("whole_video", "chunk_segment"):
             context_failed = False
             context_result = {"shots": {}, "segments": []}
             try:
                 if strategy.mode == "whole_video":
+                    update_task(task_id, "analyzing", done=0, total=1, msg="整片上下文分析中")
                     context_result = await analyze_whole_video_context(video.filepath, shots_to_analyze, video_id=video.id)
                 else:
-                    context_result = await analyze_chunked_context(video.filepath, shots_to_analyze, SHOTS_DIR, video_id=video.id)
+                    context_result = await analyze_chunked_context(
+                        video.filepath,
+                        shots_to_analyze,
+                        SHOTS_DIR,
+                        video_id=video.id,
+                        on_chunk_complete=on_chunk_complete,
+                    )
             except Exception as e:
                 context_failed = True
                 app_logger.error(f"[上下文分析失败] video_id={video_id}, mode={strategy.mode}, error={e}", exc_info=True)
 
             if not context_failed:
-                shot_results = context_result.get("shots") or {}
-                for shot in shots_to_analyze:
-                    result = shot_results.get(shot.index)
-                    if not result:
-                        continue
-                    result.setdefault("analysis_source", strategy.mode)
-                    result.setdefault("analysis_mode", "whole_video_context" if strategy.mode == "whole_video" else "chunk_segment_context")
-                    shot.analysis = result
-                    analyzed_indices.add(shot.index)
-                db.commit()
+                if strategy.mode == "whole_video":
+                    written = apply_context_result(context_result, strategy.mode)
+                    update_task(task_id, "analyzing", done=1, total=1, msg=f"整片上下文分析完成：已写入 {written} 个镜头")
 
                 existing = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
                 if not existing:
@@ -485,7 +512,6 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                 }
                 db.commit()
 
-                mark_context_done(len(analyzed_indices), f"上下文分析完成：{len(analyzed_indices)}/{total}")
 
             if is_task_cancelled(task_id):
                 app_logger.info(f"分析任务已取消，保留已完成结果: video_id={video_id}, task_id={task_id}")

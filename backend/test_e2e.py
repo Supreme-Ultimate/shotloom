@@ -812,6 +812,48 @@ class TestContextAnalyzer:
         assert segment["shot_indices"] == [0, 1]
 
 
+    def test_chunk_prompt_uses_relative_times_with_original_context(self):
+        from types import SimpleNamespace
+        from services.context_analyzer import _context_prompt
+
+        shot = SimpleNamespace(index=3, start_time=10.0, end_time=12.5, duration=2.5)
+
+        prompt = _context_prompt([shot], "chunk_segment", start_time=10.0)
+
+        assert "#3: 0.000s - 2.500s" in prompt
+        assert "原视频时间 10.000s - 12.500s" in prompt
+
+    def test_chunked_context_reports_each_chunk_as_it_finishes(self, tmp_path, monkeypatch):
+        import services.context_analyzer as context_analyzer
+        from types import SimpleNamespace
+
+        shots = [
+            SimpleNamespace(index=0, start_time=0.0, end_time=2.0, duration=2.0),
+            SimpleNamespace(index=1, start_time=2.0, end_time=4.0, duration=2.0),
+            SimpleNamespace(index=2, start_time=4.0, end_time=6.0, duration=2.0),
+        ]
+        monkeypatch.setattr(context_analyzer, "build_shot_chunks", lambda _shots: [[shots[0], shots[1]], [shots[2]]])
+        monkeypatch.setattr(context_analyzer, "_extract_extended_clip", lambda *_args, **_kwargs: None)
+
+        def fake_call(_path, chunk, source, start_time=0.0, chunk_index=None, video_id=None):
+            return {
+                "shots": {shot.index: {"what": f"shot-{shot.index}"} for shot in chunk},
+                "segments": [{"shot_indices": [shot.index for shot in chunk], "summary": f"chunk-{chunk_index}"}],
+            }
+
+        monkeypatch.setattr(context_analyzer, "_call_context_model", fake_call)
+        completed = []
+
+        async def on_chunk(result, chunk, chunk_index, total_chunks):
+            completed.append((chunk_index, total_chunks, [s.index for s in chunk], sorted(result["shots"].keys())))
+
+        import asyncio
+        result = asyncio.run(context_analyzer.analyze_chunked_context("source.mp4", shots, tmp_path, on_chunk_complete=on_chunk))
+
+        assert completed == [(0, 2, [0, 1], [0, 1]), (1, 2, [2], [2])]
+        assert sorted(result["shots"].keys()) == [0, 1, 2]
+
+
 class TestContextAnalysisWorker:
     def _create_context_video(self, user_id: int, shot_count: int = 2) -> int:
         db = get_db_session()
@@ -910,6 +952,50 @@ class TestContextAnalysisWorker:
             assert shots[1].analysis["what"] == "fallback"
         finally:
             db.close()
+
+
+    def test_worker_updates_chunk_progress_and_saves_chunk_results_immediately(self):
+        r = register("chunk_progress@example.com")
+        user_id = r.json()["user_id"]
+        video_id = self._create_context_video(user_id, shot_count=3)
+        from task_store import create_task
+        create_task("chunk_progress_task", video_id, user_id, 3, None)
+        updates = []
+        db_snapshots = []
+
+        def fake_update_task(task_id, stage, done=None, total=None, msg=None):
+            if task_id == "chunk_progress_task" and stage == "analyzing":
+                updates.append((done, total, msg))
+
+        async def fake_chunked(_path, chunk_shots, _temp_dir, video_id=None, on_chunk_complete=None):
+            first = {"shots": {0: {"what": "A"}, 1: {"what": "B"}}, "segments": [{"shot_indices": [0, 1]}]}
+            second = {"shots": {2: {"what": "C"}}, "segments": [{"shot_indices": [2]}]}
+            await on_chunk_complete(first, chunk_shots[:2], 0, 2)
+            db = get_db_session()
+            try:
+                db_snapshots.append([
+                    s.analysis.get("what") if s.analysis else None
+                    for s in db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
+                ])
+            finally:
+                db.close()
+            await on_chunk_complete(second, chunk_shots[2:], 1, 2)
+            return {"shots": {**first["shots"], **second["shots"]}, "segments": first["segments"] + second["segments"]}
+
+        with (
+            patch.object(analysis_router, "choose_analysis_strategy", return_value=type("S", (), {"mode": "chunk_segment", "reason": "test"})()),
+            patch.object(analysis_router, "analyze_chunked_context", side_effect=fake_chunked),
+            patch.object(analysis_router, "update_task", side_effect=fake_update_task),
+            patch.object(analysis_router, "analyze_shot") as analyze_mock,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            import asyncio
+            asyncio.run(ORIGINAL_RUN_ANALYSIS(video_id, "chunk_progress_task", user_id))
+            analyze_mock.assert_not_called()
+
+        assert db_snapshots == [["A", "B", None]]
+        assert (1, 2, "分块上下文分析 1/2：已写入 2 个镜头") in updates
+        assert (2, 2, "分块上下文分析 2/2：已写入 1 个镜头") in updates
 
 
 class TestSignedVideoUrls:

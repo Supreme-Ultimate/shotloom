@@ -41,26 +41,30 @@ def choose_analysis_strategy(video_duration: float | None, shot_count: int, sele
     return AnalysisStrategy("chunk_segment", "video exceeds whole-video context limits")
 
 
-def _shot_boundaries_text(shots: list) -> str:
+def _shot_boundaries_text(shots: list, start_time: float = 0.0) -> str:
     lines = []
     for shot in shots:
+        relative_start = max(0.0, float(shot.start_time) - start_time)
+        relative_end = max(relative_start, float(shot.end_time) - start_time)
         lines.append(
-            f"#{shot.index}: {shot.start_time:.3f}s - {shot.end_time:.3f}s "
-            f"(display #{shot.index + 1}, duration {shot.duration:.3f}s)"
+            f"#{shot.index}: {relative_start:.3f}s - {relative_end:.3f}s "
+            f"(display #{shot.index + 1}, duration {shot.duration:.3f}s, "
+            f"原视频时间 {shot.start_time:.3f}s - {shot.end_time:.3f}s)"
         )
     return "\n".join(lines)
 
 
 def _context_prompt(shots: list, mode: str, start_time: float = 0.0) -> str:
-    boundaries = _shot_boundaries_text(shots)
+    boundaries = _shot_boundaries_text(shots, start_time=start_time)
     return f"""
 你是专业影视拉片分析师。请观看当前视频，并严格按照我提供的镜头边界输出结构化 JSON。
 
 重要规则：
 1. 镜头边界是唯一可信边界，不要新增、删除、拆分或重编号镜头；shot_index 和 shot_indices 必须使用边界列表中 # 后面的零基索引。
-2. 如果某个镜头很短，请结合前后上下文判断它的内容和作用，但仍必须为该镜头单独输出结果。
-3. 请识别对白连续、动作连续、反应链、情绪节拍和叙事段落。
-4. 只输出 JSON，不要输出 Markdown。
+2. 边界时间是当前输入视频片段内的相对时间；括号中的原视频时间只用于理解上下文，不能用来定位当前输入片段。
+3. 如果某个镜头很短，请结合前后上下文判断它的内容和作用，但仍必须为该镜头单独输出结果。
+4. 请识别对白连续、动作连续、反应链、情绪节拍和叙事段落。
+5. 只输出 JSON，不要输出 Markdown。
 
 当前分析模式：{mode}
 当前片段在原视频中的起点：{start_time:.3f}s
@@ -207,7 +211,7 @@ def build_shot_chunks(shots: list, max_duration: float = CHUNK_SEGMENT_DURATION,
     return chunks
 
 
-async def analyze_chunked_context(video_path: str, shots: list, temp_dir: str | Path, video_id: int | None = None) -> dict[str, Any]:
+async def analyze_chunked_context(video_path: str, shots: list, temp_dir: str | Path, video_id: int | None = None, on_chunk_complete=None) -> dict[str, Any]:
     chunks = build_shot_chunks(shots)
     app_logger.info(f"[上下文分析] 使用分块段落分析: chunks={len(chunks)}, shots={len(shots)}")
     merged_shots: dict[int, dict[str, Any]] = {}
@@ -227,6 +231,10 @@ async def analyze_chunked_context(video_path: str, shots: list, temp_dir: str | 
             )
             merged_shots.update(result["shots"])
             merged_segments.extend(result["segments"])
+            if on_chunk_complete:
+                maybe_awaitable = on_chunk_complete(result, chunk, chunk_index, len(chunks))
+                if asyncio.iscoroutine(maybe_awaitable):
+                    await maybe_awaitable
         finally:
             chunk_path.unlink(missing_ok=True)
 
