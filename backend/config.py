@@ -11,7 +11,7 @@ load_dotenv(BASE_DIR / ".env")
 ENV = os.getenv("ENV", "development").lower()
 
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-MODEL_NAME = os.getenv("MODEL_NAME", "qwen3.5-flash")
+MODEL_NAME = os.getenv("MODEL_NAME", "qwen3.5-omni-plus")
 DASHSCOPE_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 CONTINUITY_MODEL_NAME = os.getenv("CONTINUITY_MODEL_NAME", "qwen-max")
 PROMPT_CONFIG_PATH = os.getenv("PROMPT_CONFIG_PATH", "")
@@ -32,6 +32,7 @@ QWEN_VIDEO_INPUT_MODE = os.getenv("QWEN_VIDEO_INPUT_MODE", "auto").lower()
 PUBLIC_VIDEO_BASE_URL = os.getenv("PUBLIC_VIDEO_BASE_URL", "").rstrip("/")
 SIGNED_VIDEO_URL_EXPIRE_SECONDS = int(os.getenv("SIGNED_VIDEO_URL_EXPIRE_SECONDS", "1800"))
 SIGNED_VIDEO_URL_SECRET = os.getenv("SIGNED_VIDEO_URL_SECRET", "")
+QWEN_OMNI_OUTPUT_MODALITIES = [m.strip() for m in os.getenv("QWEN_OMNI_OUTPUT_MODALITIES", "text").split(",") if m.strip()]
 
 UPLOADS_DIR = BASE_DIR / "uploads"
 SHOTS_DIR = BASE_DIR / "shots"

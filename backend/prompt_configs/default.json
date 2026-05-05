@@ -5,42 +5,126 @@
   "shot_prompt_intro": "请分析这段视频片段（镜头 #{shot_index}/{total_shots}）。请同时理解画面与音轨：台词、旁白、歌词、环境声、音乐和音效都要纳入分析。",
   "shot_output_instruction": "输出以下 JSON 结构（所有字段必填，用中文，直接输出 JSON，不加代码块）：",
   "shot_fields": [
-    { "key": "shot_scale", "description": "远景|全景|中景|近景|特写|大特写 之一" },
-    { "key": "composition", "description": "构图方式的具体描述" },
-    { "key": "camera_movement", "description": "固定|推|拉|摇|移|跟|升降|手持 之一或组合" },
-    { "key": "lighting", "description": "光线类型和方向，明暗对比描述" },
-    { "key": "color_tone", "description": "色调、色温、饱和度的整体描述" },
-    { "key": "content_description", "description": "画面中发生了什么，人物动作/表情/环境的客观描述" },
-    { "key": "on_screen_text", "description": "画面中出现的所有文字内容（字幕、标题、标识牌等），如果没有则填'无'" },
-    { "key": "dialogue", "description": "请优先根据音轨识别对话/旁白/歌词；如果没有可辨识人声则填'无'" },
+    {
+      "key": "shot_scale",
+      "description": "远景|全景|中景|近景|特写|大特写 之一"
+    },
+    {
+      "key": "composition",
+      "description": "构图方式的具体描述"
+    },
+    {
+      "key": "camera_movement",
+      "description": "固定|推|拉|摇|移|跟|升降|手持 之一或组合"
+    },
+    {
+      "key": "lighting",
+      "description": "光线类型和方向，明暗对比描述"
+    },
+    {
+      "key": "color_tone",
+      "description": "色调、色温、饱和度的整体描述"
+    },
+    {
+      "key": "content_description",
+      "description": "画面中发生了什么，人物动作/表情/环境的客观描述"
+    },
+    {
+      "key": "time_evidence",
+      "description": "用于判断本镜头内容的时间证据；如果是合并上下文片段，请写目标镜头在输入片段中的相对时间范围"
+    },
+    {
+      "key": "on_screen_text",
+      "description": "画面中出现的所有文字内容（字幕、标题、标识牌等），如果没有则填'无'"
+    },
+    {
+      "key": "dialogue",
+      "description": "请优先根据音轨识别对话/旁白/歌词；如果没有可辨识人声则填'无'"
+    },
     {
       "key": "audio",
       "description": "声音分析",
       "fields": [
-        { "key": "dialogue", "description": "逐字记录音轨中的对话/旁白/歌词；没有则填'无'" },
-        { "key": "sound_type", "description": "人声|音乐|环境声|音效|静音|混合 之一或组合" },
-        { "key": "music", "description": "音乐/配乐的风格、情绪、节奏；没有则填'无'" },
-        { "key": "ambient_sound", "description": "雨声、脚步、车流、风声等环境声；没有则填'无'" },
-        { "key": "speaker_emotion", "description": "从声音判断说话者/演唱者情绪；没有人声则填'无'" }
+        {
+          "key": "dialogue",
+          "description": "逐字记录音轨中的对话/旁白/歌词；没有则填'无'"
+        },
+        {
+          "key": "speaker",
+          "description": "说话者/旁白/歌手身份、声线、口音或方言；没有则填'无'"
+        },
+        {
+          "key": "sound_type",
+          "description": "人声|音乐|环境声|音效|静音|混合 之一或组合"
+        },
+        {
+          "key": "music",
+          "description": "音乐/配乐的风格、情绪、节奏；没有则填'无'"
+        },
+        {
+          "key": "ambient_sound",
+          "description": "雨声、脚步、车流、风声等环境声；没有则填'无'"
+        },
+        {
+          "key": "speaker_emotion",
+          "description": "从声音判断说话者/演唱者情绪；没有人声则填'无'"
+        },
+        {
+          "key": "transcript_timestamps",
+          "description": "如可判断，给出该镜头内台词/歌词的起止时间；没有则填'无'"
+        }
       ]
     },
-    { "key": "audiovisual_sync", "description": "声音与画面的同步/反差/互补关系" },
-    { "key": "audio_narrative_role", "description": "声音在叙事中的作用，如交代信息、制造悬念、强化情绪、转场等" },
-    { "key": "what", "description": "用一句话概括这个镜头的核心视觉信息" },
-    { "key": "how", "description": "拍摄者具体用了哪些技术手法来实现这个效果" },
-    { "key": "why", "description": "导演/摄影师为什么做这个选择？这个决策服务于什么叙事或情感目的？" },
+    {
+      "key": "audiovisual_sync",
+      "description": "声音与画面的同步/反差/互补关系"
+    },
+    {
+      "key": "audio_narrative_role",
+      "description": "声音在叙事中的作用，如交代信息、制造悬念、强化情绪、转场等"
+    },
+    {
+      "key": "what",
+      "description": "用一句话概括这个镜头的核心视觉信息"
+    },
+    {
+      "key": "how",
+      "description": "拍摄者具体用了哪些技术手法来实现这个效果"
+    },
+    {
+      "key": "why",
+      "description": "导演/摄影师为什么做这个选择？这个决策服务于什么叙事或情感目的？"
+    },
     {
       "key": "narrative_level",
       "description": "叙事层级",
       "fields": [
-        { "key": "scene", "description": "所处场景的时空背景" },
-        { "key": "event", "description": "当前镜头中发生的具体事件" },
-        { "key": "information", "description": "这个镜头向观众传递了什么新信息或暗示" }
+        {
+          "key": "scene",
+          "description": "所处场景的时空背景"
+        },
+        {
+          "key": "event",
+          "description": "当前镜头中发生的具体事件"
+        },
+        {
+          "key": "information",
+          "description": "这个镜头向观众传递了什么新信息或暗示"
+        }
       ]
     },
-    { "key": "emotional_function", "description": "这个镜头制造的情绪体验" },
-    { "key": "narrative_decision", "description": "创作者在这里做的关键叙事决策是什么（如：信息揭示时机/视角选择/冲突呈现方式）" },
-    { "key": "rhythm_contribution", "description": "慢节奏|快节奏|中等节奏，以及对全片节奏的贡献" }
+    {
+      "key": "emotional_function",
+      "description": "这个镜头制造的情绪体验"
+    },
+    {
+      "key": "narrative_decision",
+      "description": "创作者在这里做的关键叙事决策是什么（如：信息揭示时机/视角选择/冲突呈现方式）"
+    },
+    {
+      "key": "rhythm_contribution",
+      "description": "慢节奏|快节奏|中等节奏，以及对全片节奏的贡献"
+    }
   ],
   "continuity_role": "你是一位专业的影视分析师。以下是一部视频所有镜头的分析数据（JSON 数组）。请基于这些数据，输出一个整体分析报告。",
   "continuity_output_instruction": "请输出以下 JSON 结构（用中文，直接输出 JSON，不要加代码块）：",
@@ -60,42 +144,99 @@
       "key": "continuity",
       "description": "连贯性",
       "fields": [
-        { "key": "shot_scale_flow", "description": "景别变化的整体趋势和逻辑" },
-        { "key": "movement_coherence", "description": "运镜衔接是否流畅，剪辑点的动作/方向连贯性评估" },
-        { "key": "emotional_arc", "description": "情绪曲线描述，如：紧张→舒缓→高潮" },
-        { "key": "color_continuity", "description": "色调变化是否有规律，是否用于区分叙事段落" }
+        {
+          "key": "shot_scale_flow",
+          "description": "景别变化的整体趋势和逻辑"
+        },
+        {
+          "key": "movement_coherence",
+          "description": "运镜衔接是否流畅，剪辑点的动作/方向连贯性评估"
+        },
+        {
+          "key": "emotional_arc",
+          "description": "情绪曲线描述，如：紧张→舒缓→高潮"
+        },
+        {
+          "key": "color_continuity",
+          "description": "色调变化是否有规律，是否用于区分叙事段落"
+        }
       ]
     },
     {
       "key": "rhythm",
       "description": "节奏",
       "fields": [
-        { "key": "avg_shot_duration", "description": "平均镜头时长（数字，秒）", "example": 2.5 },
-        { "key": "shortest_shot", "description": "最短镜头时长（秒）", "example": 0.8 },
-        { "key": "longest_shot", "description": "最长镜头时长（秒）", "example": 6.2 },
-        { "key": "plot_change_frequency", "description": "剧情变化频率的文字描述" },
-        { "key": "info_density_pattern", "description": "信息密度分布规律（开头/中段/结尾）" },
-        { "key": "pacing_assessment", "description": "节奏整体评估，指出拖沓或紧凑的具体段落" },
-        { "key": "tension_peaks", "description": "第N镜头附近是节奏高潮，原因是...", "type": "array" }
+        {
+          "key": "avg_shot_duration",
+          "description": "平均镜头时长（数字，秒）",
+          "example": 2.5
+        },
+        {
+          "key": "shortest_shot",
+          "description": "最短镜头时长（秒）",
+          "example": 0.8
+        },
+        {
+          "key": "longest_shot",
+          "description": "最长镜头时长（秒）",
+          "example": 6.2
+        },
+        {
+          "key": "plot_change_frequency",
+          "description": "剧情变化频率的文字描述"
+        },
+        {
+          "key": "info_density_pattern",
+          "description": "信息密度分布规律（开头/中段/结尾）"
+        },
+        {
+          "key": "pacing_assessment",
+          "description": "节奏整体评估，指出拖沓或紧凑的具体段落"
+        },
+        {
+          "key": "tension_peaks",
+          "description": "第N镜头附近是节奏高潮，原因是...",
+          "type": "array"
+        }
       ]
     },
     {
       "key": "narrative_structure",
       "description": "叙事结构",
       "fields": [
-        { "key": "detected_genre", "description": "推测的作品类型" },
-        { "key": "three_act", "description": "三幕结构分析（如适用）" },
-        { "key": "key_turning_points", "description": "镜头#N：转折点描述", "type": "array" },
-        { "key": "information_release_strategy", "description": "信息揭示策略分析（集中/分散/误导等）" }
+        {
+          "key": "detected_genre",
+          "description": "推测的作品类型"
+        },
+        {
+          "key": "three_act",
+          "description": "三幕结构分析（如适用）"
+        },
+        {
+          "key": "key_turning_points",
+          "description": "镜头#N：转折点描述",
+          "type": "array"
+        },
+        {
+          "key": "information_release_strategy",
+          "description": "信息揭示策略分析（集中/分散/误导等）"
+        }
       ]
     },
     {
       "key": "genre_patterns",
       "description": "类型规律",
       "fields": [
-        { "key": "structural_notes", "description": "该类型常见叙事规律在本片中的体现" },
-        { "key": "deviation_notes", "description": "本片与类型惯例的偏差之处" }
+        {
+          "key": "structural_notes",
+          "description": "该类型常见叙事规律在本片中的体现"
+        },
+        {
+          "key": "deviation_notes",
+          "description": "本片与类型惯例的偏差之处"
+        }
       ]
     }
-  ]
+  ],
+  "shot_extra_instructions": "请按 Qwen-Omni 音视频理解方式先完整理解输入片段，再输出 JSON：\\n1. 画面：描述该镜头时间范围内实际出现的人物、动作、表情、场景、道具、构图和可见文字。\\n2. 声音：识别台词、旁白、歌词、音乐、环境声和音效；如果有人声，请尽量逐字转写，并说明说话者/歌手的声线、口音/方言、语速、情绪和语气。\\n3. 声画同步：判断声音是否与画面同步、反差、补充信息或跨镜头延续。\\n4. 不要把相邻镜头的内容误写到当前镜头；如果输入片段是合并上下文，请优先分析提示中指定的目标镜头。"
 }

@@ -28,6 +28,7 @@ from config import (
     CONTEXT_BASE64_MAX_MB,
     PUBLIC_VIDEO_BASE_URL,
     QWEN_VIDEO_INPUT_MODE,
+    QWEN_OMNI_OUTPUT_MODALITIES,
 )
 from prompt_config import build_shot_prompt
 from logger import app_logger
@@ -254,7 +255,7 @@ def _call_omni_model(video_path: str, user_text: str, video_id: int | None = Non
                 ],
             }
         ],
-        modalities=["text"],
+        modalities=QWEN_OMNI_OUTPUT_MODALITIES or ["text"],
         stream=True,
         stream_options={"include_usage": True},
     )

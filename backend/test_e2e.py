@@ -822,6 +822,9 @@ class TestContextAnalyzer:
 
         assert "#3: 0.000s - 2.500s" in prompt
         assert "原视频时间 10.000s - 12.500s" in prompt
+        assert "storyline" in prompt
+        assert "不要把前一个/后一个镜头" in prompt
+        assert "transcript_timestamps" in prompt
 
     def test_chunked_context_reports_each_chunk_as_it_finishes(self, tmp_path, monkeypatch):
         import services.context_analyzer as context_analyzer
@@ -1073,6 +1076,47 @@ class TestOmniVideoInput:
         url = _video_input_url(str(video), video_id=7)
 
         assert url.startswith("data:video/mp4;base64,")
+
+
+    def test_default_model_is_qwen35_omni_plus(self):
+        from pathlib import Path
+        assert 'MODEL_NAME = os.getenv("MODEL_NAME", "qwen3.5-omni-plus")' in Path("config.py").read_text(encoding="utf-8")
+
+    def test_omni_request_uses_stream_text_modalities(self, tmp_path, monkeypatch):
+        import services.ai_analyzer as ai
+
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"small")
+        captured = {}
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                delta = type("Delta", (), {"content": '{"ok": true}'})()
+                choice = type("Choice", (), {"delta": delta})()
+                return [type("Chunk", (), {"choices": [choice]})()]
+
+        fake_client = type("Client", (), {
+            "chat": type("Chat", (), {
+                "completions": FakeCompletions()
+            })()
+        })()
+
+        monkeypatch.setattr(ai, "_openai_client", fake_client)
+        monkeypatch.setattr(ai, "MODEL_NAME", "qwen3.5-omni-plus")
+        monkeypatch.setattr(ai, "QWEN_OMNI_OUTPUT_MODALITIES", ["text"])
+        monkeypatch.setattr(config, "QWEN_VIDEO_INPUT_MODE", "base64")
+
+        result = ai._call_omni_model(str(video), "prompt", video_id=99)
+
+        assert result == {"ok": True}
+        assert captured["model"] == "qwen3.5-omni-plus"
+        assert captured["stream"] is True
+        assert captured["stream_options"] == {"include_usage": True}
+        assert captured["modalities"] == ["text"]
+        content = captured["messages"][0]["content"]
+        assert content[0]["type"] == "video_url"
+        assert content[1] == {"type": "text", "text": "prompt"}
 
     def test_call_model_with_retries_passes_video_id_to_omni(self, tmp_path, monkeypatch):
         import services.ai_analyzer as ai

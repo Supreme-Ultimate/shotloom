@@ -116,7 +116,7 @@ ENV=development
 Common optional variables:
 
 ```env
-MODEL_NAME=qwen3.5-omni-flash
+MODEL_NAME=qwen3.5-omni-plus
 CONTINUITY_MODEL_NAME=qwen-max
 PROMPT_CONFIG_PATH=backend/prompt_configs/default.json
 MIN_MODEL_VIDEO_DURATION=2.0
@@ -151,6 +151,7 @@ ShotLoom can derive shot-level analysis from whole-video context for short video
 | `CHUNK_SEGMENT_OVERLAP_SHOTS` | `2` | Overlapping shots between adjacent chunks. |
 | `SHOT_FALLBACK_ENABLED` | `true` | Fall back to shot-level analysis when context analysis misses shots. |
 | `QWEN_VIDEO_INPUT_MODE` | `auto` | Qwen Omni video input mode: `auto` uses Base64 for small files and signed URLs for large files; force with `base64` or `url`. |
+| `QWEN_OMNI_OUTPUT_MODALITIES` | `text` | Omni output modalities. Keep `text` for analysis to avoid extra generated-audio cost. |
 | `PUBLIC_VIDEO_BASE_URL` | empty | Public base URL reachable by Qwen, for example `https://your-domain.com/shotloom`. |
 | `SIGNED_VIDEO_URL_EXPIRE_SECONDS` | `1800` | Signed video URL TTL in seconds. |
 | `SIGNED_VIDEO_URL_SECRET` | empty | Dedicated signing secret; use a random production value. Falls back to `SECRET_KEY` if empty. |

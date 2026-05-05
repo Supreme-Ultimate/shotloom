@@ -62,9 +62,12 @@ def _context_prompt(shots: list, mode: str, start_time: float = 0.0) -> str:
 重要规则：
 1. 镜头边界是唯一可信边界，不要新增、删除、拆分或重编号镜头；shot_index 和 shot_indices 必须使用边界列表中 # 后面的零基索引。
 2. 边界时间是当前输入视频片段内的相对时间；括号中的原视频时间只用于理解上下文，不能用来定位当前输入片段。
-3. 如果某个镜头很短，请结合前后上下文判断它的内容和作用，但仍必须为该镜头单独输出结果。
-4. 请识别对白连续、动作连续、反应链、情绪节拍和叙事段落。
-5. 只输出 JSON，不要输出 Markdown。
+3. 先按 Qwen-Omni 音视频理解方式通看当前输入片段：按相对时间轴理解 storyline、visible text、speakers/transcript、音乐、环境声、音效，再把观察结果映射回下方镜头边界。
+4. 每个镜头的描述必须对应它在当前输入片段中的相对时间范围；不要把前一个/后一个镜头的画面、台词或动作挪到本镜头。
+5. 如果对白、旁白、歌词、动作或音效跨越镜头边界，请在相邻镜头中分别说明可听见/可看见的部分，并用 audio_continuity/action_continuity 标记连续关系。
+6. 如果某个镜头很短，请结合前后上下文判断它的内容和作用，但仍必须为该镜头单独输出结果。
+7. 请识别对白连续、动作连续、反应链、情绪节拍和叙事段落。
+8. 只输出 JSON，不要输出 Markdown。
 
 当前分析模式：{mode}
 当前片段在原视频中的起点：{start_time:.3f}s
@@ -81,15 +84,18 @@ def _context_prompt(shots: list, mode: str, start_time: float = 0.0) -> str:
       "composition": "构图",
       "lighting": "光影",
       "color_tone": "色调",
-      "content_description": "画面内容、人物动作和表情",
+      "content_description": "严格对应该镜头相对时间范围内的画面内容、人物动作和表情",
+      "time_evidence": "当前输入片段内用于判断该镜头内容的相对时间范围，例如 12.300s-14.533s；必要时说明原视频时间",
       "on_screen_text": "画面文字，没有则写无",
       "dialogue": "该镜头内可听见的对白/旁白，没有则写无",
       "audio": {{
-        "dialogue": "音轨台词",
+        "dialogue": "逐字记录该镜头相对时间范围内可听见的对话/旁白/歌词；没有则写无",
+        "speaker": "说话者/旁白/歌手身份、声线、口音或方言；没有则写无",
         "sound_type": "对白/音乐/环境声/音效/无",
         "music": "音乐描述",
         "ambient_sound": "环境声描述",
-        "speaker_emotion": "人声情绪"
+        "speaker_emotion": "人声情绪",
+        "transcript_timestamps": "该镜头内台词/歌词起止时间；无法判断则写无"
       }},
       "audiovisual_sync": "声画关系",
       "audio_narrative_role": "声音叙事作用",
