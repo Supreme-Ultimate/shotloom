@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from database import get_db, Video, User, Shot, CreditTransaction
-from config import MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB, UPLOADS_DIR, SHOTS_DIR, THUMBNAILS_DIR
+from config import MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB, MAX_VIDEO_DURATION_SECONDS, UPLOADS_DIR, SHOTS_DIR, THUMBNAILS_DIR
 from auth import get_current_user
 from logger import app_logger
 from permissions import get_video_for_user
@@ -73,11 +73,19 @@ async def upload_video(
     app_logger.info(f"视频上传成功: {save_path} | 用户: {current_user.email}")
 
     meta = get_video_meta(str(save_path))
+    duration = float(meta.get("duration") or 0)
+    if MAX_VIDEO_DURATION_SECONDS > 0 and duration > MAX_VIDEO_DURATION_SECONDS:
+        save_path.unlink(missing_ok=True)
+        max_minutes = MAX_VIDEO_DURATION_SECONDS / 60
+        raise HTTPException(
+            413,
+            f"视频时长过长，最大支持 {max_minutes:.0f} 分钟（{MAX_VIDEO_DURATION_SECONDS:.0f} 秒）",
+        )
 
     video = Video(
         filename=original_filename,
         filepath=str(save_path),
-        duration=meta["duration"],
+        duration=duration,
         fps=meta["fps"],
         width=meta["width"],
         height=meta["height"],

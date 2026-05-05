@@ -56,6 +56,7 @@ AI_CONCURRENCY = int(os.getenv("AI_CONCURRENCY", "2"))
 # 上传限制
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "1024"))
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+MAX_VIDEO_DURATION_SECONDS = float(os.getenv("MAX_VIDEO_DURATION_SECONDS", "3600"))
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 TASK_QUEUE_NAME = os.getenv("TASK_QUEUE_NAME", "analysis")

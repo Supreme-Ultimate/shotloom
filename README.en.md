@@ -126,7 +126,9 @@ MODEL_TRANSIENT_RETRIES=2
 SCENE_THRESHOLD=27
 AI_CONCURRENCY=2
 MAX_UPLOAD_SIZE_MB=1024
+MAX_VIDEO_DURATION_SECONDS=3600
 VITE_MAX_UPLOAD_SIZE_MB=1024
+VITE_MAX_VIDEO_DURATION_SECONDS=3600
 NGINX_CLIENT_MAX_BODY_SIZE=1024m
 INITIAL_CREDITS=100
 FRONTEND_URL=http://localhost:5173
@@ -318,6 +320,7 @@ Production notes:
 - Set `FRONTEND_URL` / `CORS_ORIGINS` to your real domain.
 - Never use the template `SECRET_KEY` or `POSTGRES_PASSWORD`.
 - Upload limits are controlled by backend `MAX_UPLOAD_SIZE_MB`, frontend `VITE_MAX_UPLOAD_SIZE_MB`, and Nginx `client_max_body_size` / `NGINX_CLIENT_MAX_BODY_SIZE`; keep all three aligned.
+- Single-video duration defaults to 3600 seconds (1 hour) to match the Qwen3.5-Omni video input limit; keep backend `MAX_VIDEO_DURATION_SECONDS` and frontend `VITE_MAX_VIDEO_DURATION_SECONDS` aligned if you change it.
 
 ## Manual Development
 

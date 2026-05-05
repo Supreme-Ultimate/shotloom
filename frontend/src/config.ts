@@ -21,6 +21,17 @@ export const UPLOAD_LIMIT_LABEL = MAX_UPLOAD_SIZE_MB >= 1024 && MAX_UPLOAD_SIZE_
   ? `${MAX_UPLOAD_SIZE_MB / 1024}GB`
   : `${MAX_UPLOAD_SIZE_MB}MB`
 
+// 单个视频最大时长，需与后端 MAX_VIDEO_DURATION_SECONDS 保持一致。默认 1 小时，匹配 Qwen3.5-Omni 视频输入限制。
+const parsedMaxVideoDurationSeconds = Number(import.meta.env.VITE_MAX_VIDEO_DURATION_SECONDS || '3600')
+export const MAX_VIDEO_DURATION_SECONDS = Number.isFinite(parsedMaxVideoDurationSeconds) && parsedMaxVideoDurationSeconds > 0
+  ? parsedMaxVideoDurationSeconds
+  : 3600
+export const VIDEO_DURATION_LIMIT_LABEL = MAX_VIDEO_DURATION_SECONDS >= 3600 && MAX_VIDEO_DURATION_SECONDS % 3600 === 0
+  ? `${MAX_VIDEO_DURATION_SECONDS / 3600}小时`
+  : MAX_VIDEO_DURATION_SECONDS >= 60 && MAX_VIDEO_DURATION_SECONDS % 60 === 0
+    ? `${MAX_VIDEO_DURATION_SECONDS / 60}分钟`
+    : `${MAX_VIDEO_DURATION_SECONDS}秒`
+
 // API 基础地址
 // 开发环境：通过 Vite proxy 转发，使用空字符串
 // 生产环境：使用环境变量中配置的完整 URL

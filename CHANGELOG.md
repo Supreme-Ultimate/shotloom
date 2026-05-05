@@ -3,6 +3,7 @@
 ## 0.2.0
 
 ### Added
+- 上传增加单个视频时长上限配置，默认 3600 秒，以匹配 Qwen3.5-Omni 1 小时视频输入限制。
 - Excel/PDF 导出补齐镜头完整 JSON、整体分析完整字段和段落分析完整字段，确保自定义 prompt 新增分析字段不会遗漏。
 - 短期签名公开视频 URL：大视频可通过 Qwen 可访问的公网 URL 输入，避免 Base64 10MB 限制。
 - 自动分析路由：短视频优先整片上下文，长视频自动分块段落，选中镜头重分析仍走单镜头回退。
@@ -22,6 +23,7 @@
 ## 0.1.0
 
 ### Added
+- 上传增加单个视频时长上限配置，默认 3600 秒，以匹配 Qwen3.5-Omni 1 小时视频输入限制。
 
 - Docker Compose deployment with Postgres, Redis, backend worker, backend API, and frontend.
 - User authentication, admin user management, and credit balance management.

@@ -312,6 +312,26 @@ class TestUpload:
         assert r.status_code == 400
         assert "不支持" in r.json()["detail"]
 
+    def test_upload_rejects_video_over_duration_limit(self, monkeypatch):
+        import routers.upload as upload_router
+
+        monkeypatch.setattr(upload_router, "MAX_VIDEO_DURATION_SECONDS", 60)
+        monkeypatch.setattr(upload_router, "get_video_meta", lambda _path: {
+            "duration": 61.0,
+            "fps": 25.0,
+            "width": 1920,
+            "height": 1080,
+        })
+
+        r = client.post(
+            "/api/upload",
+            files=[self._dummy_video("too_long.mp4")],
+            headers=auth_headers(self.token),
+        )
+
+        assert r.status_code == 413
+        assert "视频时长过长" in r.json()["detail"]
+
 
 class TestVideoList:
     @classmethod
