@@ -556,7 +556,7 @@ class TestCreditsAnalysis:
         assert r.json()["shot_count"] == 3
 
     def test_analyze_insufficient_credits_returns_402(self):
-        """余额为 0，任何镜头数都应返回 402"""
+        """余额为 0，任何镜头数都应返回 402，且不能留下 analyzing 状态"""
         # 新建独立用户，确保余额干净
         r = register("broke_user@example.com")
         token = r.json()["access_token"]
@@ -564,9 +564,27 @@ class TestCreditsAnalysis:
         set_credits(user_id, 0)
 
         video_id = create_video_with_shots(user_id, shot_count=5)
+        db = get_db_session()
+        try:
+            video = db.query(Video).filter(Video.id == video_id).first()
+            video.status = "completed"
+            video.error_msg = "旧错误不应被本次 402 改写"
+            db.commit()
+        finally:
+            db.close()
+
         r = client.post(f"/api/analyze/{video_id}", headers=auth_headers(token))
         assert r.status_code == 402
         assert "积分不足" in r.json()["detail"]
+
+        db = get_db_session()
+        try:
+            video = db.query(Video).filter(Video.id == video_id).first()
+            assert video.status == "completed"
+            assert video.current_task_id is None
+            assert video.error_msg == "旧错误不应被本次 402 改写"
+        finally:
+            db.close()
 
     def test_analyze_nonexistent_video(self):
         r = client.post(
@@ -832,6 +850,41 @@ class TestContextAnalyzer:
         assert analysis["analysis_source"] == "whole_video"
         assert segment["shot_indices"] == [0, 1]
 
+
+    def test_global_transcript_is_remapped_to_shot_boundaries(self, monkeypatch):
+        from types import SimpleNamespace
+        import services.context_analyzer as context_analyzer
+
+        shots = [
+            SimpleNamespace(index=0, start_time=0.0, end_time=3.7, duration=3.7),
+            SimpleNamespace(index=1, start_time=3.7, end_time=7.2, duration=3.5),
+            SimpleNamespace(index=2, start_time=7.2, end_time=12.7, duration=5.5),
+            SimpleNamespace(index=3, start_time=12.7, end_time=15.0, duration=2.3),
+        ]
+        raw = {
+            "global_transcript": [
+                {"start_time": "0.0s", "end_time": "3.7s", "speaker": "旁白", "content": "第一句"},
+                {"start_time": "3.7s", "end_time": "7.2s", "speaker": "旁白", "content": "第二句"},
+                {"start_time": "7.2s", "end_time": "12.7s", "speaker": "旁白", "content": "第三句"},
+                {"start_time": "12.7s", "end_time": "15.0s", "speaker": "旁白", "content": "第四句"},
+            ],
+            "shots": [
+                {"shot_index": 0, "audio": {"dialogue": "第一句 第二句 第三句 第四句", "transcript_timestamps": "0.0s-15.0s"}},
+                {"shot_index": 1, "audio": {"dialogue": "无", "transcript_timestamps": "无"}},
+                {"shot_index": 2, "audio": {"dialogue": "无", "transcript_timestamps": "无"}},
+                {"shot_index": 3, "audio": {"dialogue": "无", "transcript_timestamps": "无"}},
+            ],
+            "segments": [],
+        }
+        monkeypatch.setattr(context_analyzer, "_call_model_with_retries", lambda *_args, **_kwargs: raw)
+
+        result = context_analyzer._call_context_model("video.mp4", shots, "whole_video")
+
+        assert result["shots"][0]["audio"]["dialogue"] == "第一句"
+        assert result["shots"][1]["audio"]["dialogue"] == "第二句"
+        assert result["shots"][2]["audio"]["dialogue"] == "第三句"
+        assert result["shots"][3]["audio"]["dialogue"] == "第四句"
+        assert result["shots"][0]["audio"]["transcript_timestamps"] == "0.000s-3.700s"
 
     def test_chunk_prompt_uses_relative_times_with_original_context(self):
         from types import SimpleNamespace

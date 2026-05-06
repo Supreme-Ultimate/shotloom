@@ -208,11 +208,6 @@ async def start_analysis(
     if not shots:
         raise HTTPException(400, "请先进行镜头检测")
 
-    # 允许重新分析
-    if video.status in ("error", "completed"):
-        video.status = "analyzing"
-        db.commit()
-
     # 筛选要分析的镜头
     if body.shot_indices is not None:
         shots_to_analyze = [s for s in shots if s.index in body.shot_indices]
@@ -232,6 +227,7 @@ async def start_analysis(
     app_logger.info(f"[进度初始化] task_id={task_id}, total={len(shots_to_analyze)}")
 
     video.status = "analyzing"
+    video.error_msg = None
     video.current_task_id = task_id  # 保存任务 ID
     db.commit()
 
