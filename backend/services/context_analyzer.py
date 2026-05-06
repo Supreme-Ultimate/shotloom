@@ -64,13 +64,14 @@ def _context_prompt(shots: list, mode: str, start_time: float = 0.0) -> str:
 1. 镜头边界是唯一可信边界，不要新增、删除、拆分或重编号镜头；shot_index 和 shot_indices 必须使用边界列表中 # 后面的零基索引。
 2. 边界时间是当前输入视频片段内的相对时间；括号中的原视频时间只用于理解上下文，不能用来定位当前输入片段。
 3. 先按 Qwen-Omni 音视频理解方式通看当前输入片段：按相对时间轴理解 storyline、visible text、speakers/transcript、音乐、环境声、音效，再把观察结果映射回下方镜头边界。
-4. 必须先输出 global_transcript：把整段视频内所有对白/旁白/歌词按真实出现时间分句列出 start_time、end_time、speaker、content。
-5. 每个镜头的描述必须对应它在当前输入片段中的相对时间范围；不要把前一个/后一个镜头的画面、台词或动作挪到本镜头，尤其不要把整段视频的所有台词放进第一个镜头。
-6. 每个镜头 audio.dialogue 只能包含与该镜头时间范围重叠的台词；如果 global_transcript 中某句时间戳落在其他镜头，必须写到对应镜头而不是当前镜头。
-7. 如果对白、旁白、歌词、动作或音效跨越镜头边界，请在相邻镜头中分别说明可听见/可看见的部分，并用 audio_continuity/action_continuity 标记连续关系。
-8. 如果某个镜头很短，请结合前后上下文判断它的内容和作用，但仍必须为该镜头单独输出结果。
-9. 请识别对白连续、动作连续、反应链、情绪节拍和叙事段落。
-10. 只输出 JSON，不要输出 Markdown。
+4. 必须先输出 global_transcript：把整段视频内所有对白/旁白/歌词按真实出现时间切到最小可听短句/短语，列出 start_time、end_time、speaker、content。
+5. 如果一句话跨越镜头边界，必须在 global_transcript 中按镜头边界附近的真实语音时间拆成多条短语级记录；不要输出一条横跨多个镜头的粗时间戳。
+6. 每个镜头的描述必须对应它在当前输入片段中的相对时间范围；不要把前一个/后一个镜头的画面、台词或动作挪到本镜头，尤其不要把整段视频的所有台词放进第一个镜头。
+7. 每个镜头 audio.dialogue 只能包含与该镜头时间范围重叠的台词；如果 global_transcript 中某句时间戳落在其他镜头，必须写到对应镜头而不是当前镜头。
+8. 如果对白、旁白、歌词、动作或音效跨越镜头边界，请在相邻镜头中分别说明可听见/可看见的部分，并用 audio_continuity/action_continuity 标记连续关系。
+9. 如果某个镜头很短，请结合前后上下文判断它的内容和作用，但仍必须为该镜头单独输出结果。
+10. 请识别对白连续、动作连续、反应链、情绪节拍和叙事段落。
+11. 只输出 JSON，不要输出 Markdown。
 
 当前分析模式：{mode}
 当前片段在原视频中的起点：{start_time:.3f}s
@@ -214,67 +215,15 @@ def _normalize_transcript_entry(entry: Any) -> dict[str, Any] | None:
 
 
 
-_DIALOGUE_SPLIT_PATTERN = re.compile(r"[^，,。！？!?；;]+[，,。！？!?；;]?")
 
-
-def _split_dialogue_clauses(text: str) -> list[str]:
-    clauses = [match.group(0).strip() for match in _DIALOGUE_SPLIT_PATTERN.finditer(text) if match.group(0).strip()]
-    return clauses or [text.strip()]
-
-
-def _split_entry_across_boundaries(entry: dict[str, Any], relative_bounds: dict[int, tuple[float, float]]) -> list[dict[str, Any]]:
+def _entry_overlaps(entry: dict[str, Any], relative_bounds: dict[int, tuple[float, float]]) -> list[tuple[int, float, float]]:
     overlapping = []
     for idx, (shot_start, shot_end) in sorted(relative_bounds.items(), key=lambda item: item[1][0]):
         overlap_start = max(entry["start"], shot_start)
         overlap_end = min(entry["end"], shot_end)
         if overlap_end > overlap_start:
             overlapping.append((idx, overlap_start, overlap_end))
-
-    if len(overlapping) <= 1:
-        if overlapping:
-            item = dict(entry)
-            item["start"] = overlapping[0][1]
-            item["end"] = overlapping[0][2]
-            item["shot_index"] = overlapping[0][0]
-            return [item]
-        return []
-
-    clauses = _split_dialogue_clauses(entry["text"])
-    if len(clauses) < len(overlapping):
-        return [
-            {**entry, "start": overlap_start, "end": overlap_end, "shot_index": idx}
-            for idx, overlap_start, overlap_end in overlapping
-        ]
-
-    total_text_weight = sum(max(1, len(clause)) for clause in clauses)
-    duration = max(0.001, entry["end"] - entry["start"])
-    grouped: dict[int, list[str]] = {idx: [] for idx, _, _ in overlapping}
-    cursor = entry["start"]
-    for clause in clauses:
-        weight = max(1, len(clause)) / total_text_weight
-        clause_duration = duration * weight
-        midpoint = cursor + clause_duration / 2
-        target_idx = overlapping[-1][0]
-        for idx, overlap_start, overlap_end in overlapping:
-            if overlap_start <= midpoint <= overlap_end:
-                target_idx = idx
-                break
-        grouped[target_idx].append(clause)
-        cursor += clause_duration
-
-    parts = []
-    for idx, overlap_start, overlap_end in overlapping:
-        selected = grouped.get(idx) or []
-        if not selected:
-            continue
-        parts.append({
-            **entry,
-            "text": "".join(selected).strip().rstrip("，,"),
-            "start": overlap_start,
-            "end": overlap_end,
-            "shot_index": idx,
-        })
-    return parts
+    return overlapping
 
 
 def _remap_transcript_to_shots(raw: dict[str, Any], shot_map: dict[int, dict[str, Any]], shots: list, start_time: float) -> None:
@@ -292,11 +241,23 @@ def _remap_transcript_to_shots(raw: dict[str, Any], shot_map: dict[int, dict[str
     }
     assigned: dict[int, list[dict[str, Any]]] = {idx: [] for idx in relative_bounds}
 
+    coarse_cross_shot: set[int] = set()
     for entry in sorted(entries, key=lambda item: (item["start"], item["end"])):
-        split_entries = _split_entry_across_boundaries(entry, relative_bounds)
-        if split_entries:
-            for item in split_entries:
-                assigned[item["shot_index"]].append(item)
+        overlaps = _entry_overlaps(entry, relative_bounds)
+        if overlaps:
+            if len(overlaps) > 1:
+                for idx, _overlap_start, _overlap_end in overlaps:
+                    item = dict(entry)
+                    item["start"] = entry["start"]
+                    item["end"] = entry["end"]
+                    assigned[idx].append(item)
+                    coarse_cross_shot.add(idx)
+            else:
+                idx, overlap_start, overlap_end = overlaps[0]
+                item = dict(entry)
+                item["start"] = overlap_start
+                item["end"] = overlap_end
+                assigned[idx].append(item)
             continue
 
         midpoint = (entry["start"] + entry["end"]) / 2
@@ -320,6 +281,12 @@ def _remap_transcript_to_shots(raw: dict[str, Any], shot_map: dict[int, dict[str
             if speakers:
                 audio["speaker"] = speakers
             audio.setdefault("sound_type", "对白/旁白")
+            if idx in coarse_cross_shot:
+                audio["transcript_precision"] = "coarse_cross_shot"
+                analysis["transcript_precision"] = "coarse_cross_shot"
+            else:
+                audio.pop("transcript_precision", None)
+                analysis.pop("transcript_precision", None)
             analysis["dialogue"] = dialogue
         else:
             audio["dialogue"] = "无"

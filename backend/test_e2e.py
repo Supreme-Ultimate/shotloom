@@ -949,7 +949,7 @@ class TestContextAnalyzer:
         assert result["shots"][0]["audio"]["transcript_timestamps"] == "0.000s-3.700s"
 
 
-    def test_cross_shot_transcript_is_split_by_punctuation_and_overlap(self, monkeypatch):
+    def test_precise_transcript_timestamps_are_strictly_mapped_to_shot_boundaries(self, monkeypatch):
         from types import SimpleNamespace
         import services.context_analyzer as context_analyzer
 
@@ -959,11 +959,13 @@ class TestContextAnalyzer:
         ]
         raw = {
             "global_transcript": [
-                {"start_time": "10.636s", "end_time": "14.956s", "speaker": "旁白", "content": "了却凡尘，渡劫成神，恐怕我要魂飞魄散。"},
+                {"start_time": "11.420s", "end_time": "12.120s", "speaker": "旁白", "content": "了却凡尘"},
+                {"start_time": "12.120s", "end_time": "12.620s", "speaker": "旁白", "content": "渡劫成神"},
+                {"start_time": "12.900s", "end_time": "15.042s", "speaker": "旁白", "content": "恐怕我要魂飞魄散。"},
             ],
             "shots": [
                 {"shot_index": 2, "audio": {"dialogue": "无", "transcript_timestamps": "无"}},
-                {"shot_index": 3, "audio": {"dialogue": "了却凡尘，渡劫成神，恐怕我要魂飞魄散。", "transcript_timestamps": "10.636s-14.956s"}},
+                {"shot_index": 3, "audio": {"dialogue": "无", "transcript_timestamps": "无"}},
             ],
             "segments": [],
         }
@@ -971,10 +973,37 @@ class TestContextAnalyzer:
 
         result = context_analyzer._call_context_model("video.mp4", shots, "whole_video")
 
-        assert result["shots"][2]["audio"]["dialogue"] == "了却凡尘，渡劫成神"
+        assert result["shots"][2]["audio"]["dialogue"] == "了却凡尘 渡劫成神"
         assert result["shots"][3]["audio"]["dialogue"] == "恐怕我要魂飞魄散。"
-        assert result["shots"][2]["audio"]["transcript_timestamps"] == "10.636s-12.708s"
-        assert result["shots"][3]["audio"]["transcript_timestamps"] == "12.708s-14.956s"
+        assert result["shots"][2]["audio"]["transcript_timestamps"] == "11.420s-12.120s; 12.120s-12.620s"
+        assert result["shots"][3]["audio"]["transcript_timestamps"] == "12.900s-15.042s"
+
+    def test_coarse_cross_shot_transcript_is_not_split_by_text_guessing(self, monkeypatch):
+        from types import SimpleNamespace
+        import services.context_analyzer as context_analyzer
+
+        shots = [
+            SimpleNamespace(index=2, start_time=7.208, end_time=12.708, duration=5.5),
+            SimpleNamespace(index=3, start_time=12.708, end_time=15.042, duration=2.334),
+        ]
+        raw = {
+            "global_transcript": [
+                {"start_time": "11.420s", "end_time": "15.042s", "speaker": "旁白", "content": "了却凡尘，渡劫成神，恐怕我要魂飞魄散。"},
+            ],
+            "shots": [
+                {"shot_index": 2, "audio": {"dialogue": "无", "transcript_timestamps": "无"}},
+                {"shot_index": 3, "audio": {"dialogue": "无", "transcript_timestamps": "无"}},
+            ],
+            "segments": [],
+        }
+        monkeypatch.setattr(context_analyzer, "_call_model_with_retries", lambda *_args, **_kwargs: raw)
+
+        result = context_analyzer._call_context_model("video.mp4", shots, "whole_video")
+
+        assert result["shots"][2]["audio"]["dialogue"] == "了却凡尘，渡劫成神，恐怕我要魂飞魄散。"
+        assert result["shots"][3]["audio"]["dialogue"] == "了却凡尘，渡劫成神，恐怕我要魂飞魄散。"
+        assert result["shots"][2]["audio"]["transcript_precision"] == "coarse_cross_shot"
+        assert result["shots"][3]["audio"]["transcript_precision"] == "coarse_cross_shot"
 
     def test_chunk_prompt_uses_relative_times_with_original_context(self):
         from types import SimpleNamespace
