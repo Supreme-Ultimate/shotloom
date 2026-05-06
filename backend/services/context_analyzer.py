@@ -213,6 +213,70 @@ def _normalize_transcript_entry(entry: Any) -> dict[str, Any] | None:
     }
 
 
+
+_DIALOGUE_SPLIT_PATTERN = re.compile(r"[^，,。！？!?；;]+[，,。！？!?；;]?")
+
+
+def _split_dialogue_clauses(text: str) -> list[str]:
+    clauses = [match.group(0).strip() for match in _DIALOGUE_SPLIT_PATTERN.finditer(text) if match.group(0).strip()]
+    return clauses or [text.strip()]
+
+
+def _split_entry_across_boundaries(entry: dict[str, Any], relative_bounds: dict[int, tuple[float, float]]) -> list[dict[str, Any]]:
+    overlapping = []
+    for idx, (shot_start, shot_end) in sorted(relative_bounds.items(), key=lambda item: item[1][0]):
+        overlap_start = max(entry["start"], shot_start)
+        overlap_end = min(entry["end"], shot_end)
+        if overlap_end > overlap_start:
+            overlapping.append((idx, overlap_start, overlap_end))
+
+    if len(overlapping) <= 1:
+        if overlapping:
+            item = dict(entry)
+            item["start"] = overlapping[0][1]
+            item["end"] = overlapping[0][2]
+            item["shot_index"] = overlapping[0][0]
+            return [item]
+        return []
+
+    clauses = _split_dialogue_clauses(entry["text"])
+    if len(clauses) < len(overlapping):
+        return [
+            {**entry, "start": overlap_start, "end": overlap_end, "shot_index": idx}
+            for idx, overlap_start, overlap_end in overlapping
+        ]
+
+    total_text_weight = sum(max(1, len(clause)) for clause in clauses)
+    duration = max(0.001, entry["end"] - entry["start"])
+    grouped: dict[int, list[str]] = {idx: [] for idx, _, _ in overlapping}
+    cursor = entry["start"]
+    for clause in clauses:
+        weight = max(1, len(clause)) / total_text_weight
+        clause_duration = duration * weight
+        midpoint = cursor + clause_duration / 2
+        target_idx = overlapping[-1][0]
+        for idx, overlap_start, overlap_end in overlapping:
+            if overlap_start <= midpoint <= overlap_end:
+                target_idx = idx
+                break
+        grouped[target_idx].append(clause)
+        cursor += clause_duration
+
+    parts = []
+    for idx, overlap_start, overlap_end in overlapping:
+        selected = grouped.get(idx) or []
+        if not selected:
+            continue
+        parts.append({
+            **entry,
+            "text": "".join(selected).strip().rstrip("，,"),
+            "start": overlap_start,
+            "end": overlap_end,
+            "shot_index": idx,
+        })
+    return parts
+
+
 def _remap_transcript_to_shots(raw: dict[str, Any], shot_map: dict[int, dict[str, Any]], shots: list, start_time: float) -> None:
     """Use the model's global transcript timestamps as the authority for per-shot dialogue."""
     entries = [item for item in (_normalize_transcript_entry(e) for e in _iter_transcript_candidates(raw)) if item]
@@ -229,21 +293,17 @@ def _remap_transcript_to_shots(raw: dict[str, Any], shot_map: dict[int, dict[str
     assigned: dict[int, list[dict[str, Any]]] = {idx: [] for idx in relative_bounds}
 
     for entry in sorted(entries, key=lambda item: (item["start"], item["end"])):
-        best_idx = None
-        best_overlap = 0.0
+        split_entries = _split_entry_across_boundaries(entry, relative_bounds)
+        if split_entries:
+            for item in split_entries:
+                assigned[item["shot_index"]].append(item)
+            continue
+
+        midpoint = (entry["start"] + entry["end"]) / 2
         for idx, (shot_start, shot_end) in relative_bounds.items():
-            overlap = min(entry["end"], shot_end) - max(entry["start"], shot_start)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_idx = idx
-        if best_idx is None:
-            midpoint = (entry["start"] + entry["end"]) / 2
-            for idx, (shot_start, shot_end) in relative_bounds.items():
-                if shot_start <= midpoint <= shot_end:
-                    best_idx = idx
-                    break
-        if best_idx is not None:
-            assigned[best_idx].append(entry)
+            if shot_start <= midpoint <= shot_end:
+                assigned[idx].append(entry)
+                break
 
     if not any(assigned.values()):
         return
