@@ -8,6 +8,7 @@ from database import get_db, Shot, VideoAnalysis, User
 from config import THUMBNAILS_DIR
 from auth import get_current_user
 from permissions import get_video_for_user
+from services.video_path import resolve_video_path
 
 router = APIRouter(prefix="/api", tags=["results"])
 
@@ -58,7 +59,7 @@ def stream_video(
 ):
     """流式传输视频，支持 Range 请求和缓存"""
     v = get_video_for_user(video_id, current_user, db)
-    p = Path(v.filepath)
+    p = resolve_video_path(v.filepath)
     if not p.exists():
         raise HTTPException(404, "视频文件不存在")
 
@@ -225,7 +226,7 @@ def get_video_thumbnail(
     # 如果缓存不存在，提取第一帧
     if not thumb_path.exists():
         try:
-            with av.open(video.filepath) as container:
+            with av.open(str(resolve_video_path(video.filepath))) as container:
                 stream = container.streams.video[0]
                 for frame in container.decode(stream):
                     img = frame.to_image()

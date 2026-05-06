@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from database import SessionLocal, Video
 from services.signed_video_url import verify_signed_video_token
+from services.video_path import resolve_video_path
 
 router = APIRouter(prefix="/api/public", tags=["public"])
 
@@ -42,7 +43,7 @@ def stream_signed_video(token: str, request: Request):
         video = db.query(Video).filter(Video.id == int(payload["video_id"])).first()
         if not video:
             raise HTTPException(404, "视频不存在")
-        path = Path(video.filepath)
+        path = resolve_video_path(video.filepath)
         if not path.exists():
             raise HTTPException(404, "视频文件不存在")
 

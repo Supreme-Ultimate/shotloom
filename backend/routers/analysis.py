@@ -20,6 +20,7 @@ from services.clip_extractor import extract_shot_clips
 from services.ai_analyzer import analyze_shot, build_merged_analysis_unit
 from services.context_analyzer import analyze_chunked_context, analyze_whole_video_context, choose_analysis_strategy
 from services.continuity_analyzer import analyze_continuity
+from services.video_path import resolve_video_path
 from services.credits_service import check_sufficient, deduct
 from auth import get_current_user
 from config import REDIS_URL, RUN_TASKS_INLINE, SCENE_THRESHOLD, TASK_QUEUE_NAME, TASK_STALE_MINUTES, SAFE_MODEL_VIDEO_DURATION, SHOTS_DIR, SHOT_FALLBACK_ENABLED
@@ -119,7 +120,12 @@ async def detect_shots_endpoint(
     db.commit()
 
     try:
-        shots = detect_shots(video.filepath, effective_threshold)
+        resolved_video_path = resolve_video_path(video.filepath)
+        if str(resolved_video_path) != video.filepath:
+            app_logger.warning(f"视频路径已迁移: video_id={video_id}, old={video.filepath}, new={resolved_video_path}")
+            video.filepath = str(resolved_video_path)
+            db.commit()
+        shots = detect_shots(str(resolved_video_path), effective_threshold)
         app_logger.info(f"镜头检测完成: video_id={video_id}, shot_count={len(shots)}")
     except Exception as e:
         app_logger.error(f"镜头检测失败: video_id={video_id} | 错误: {e}")
@@ -136,7 +142,7 @@ async def detect_shots_endpoint(
     app_logger.info(f"开始生成缩略图: video_id={video_id}, shot_count={len(shots)}")
     from services.clip_extractor import extract_thumbnails_only
     try:
-        thumbnails = extract_thumbnails_only(video.filepath, shots, video_id)
+        thumbnails = extract_thumbnails_only(str(resolve_video_path(video.filepath)), shots, video_id)
         app_logger.info(f"缩略图生成完成: video_id={video_id}")
     except Exception as e:
         app_logger.error(f"缩略图生成失败: video_id={video_id} | 错误: {e}")
@@ -153,6 +159,7 @@ async def detect_shots_endpoint(
         ))
 
     video.status = "detected"
+    video.error_msg = None
     db.commit()
 
     return {
@@ -353,7 +360,11 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                 for s in shots_to_cut
             ]
             try:
-                clip_results = extract_shot_clips(video.filepath, boundaries, video_id)
+                source_video_path = str(resolve_video_path(video.filepath))
+                if source_video_path != video.filepath:
+                    video.filepath = source_video_path
+                    db.commit()
+                clip_results = extract_shot_clips(source_video_path, boundaries, video_id)
             except Exception as e:
                 update_task(task_id, "error", msg=str(e))
                 video.status = "error"
@@ -370,7 +381,11 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             app_logger.info(f"分析任务已取消，跳过 AI 分析: video_id={video_id}, task_id={task_id}")
             return
 
-        strategy = choose_analysis_strategy(video.duration, len(shots), len(shots_to_analyze) if shot_indices is not None else None, video.filepath)
+        source_video_path = str(resolve_video_path(video.filepath))
+        if source_video_path != video.filepath:
+            video.filepath = source_video_path
+            db.commit()
+        strategy = choose_analysis_strategy(video.duration, len(shots), len(shots_to_analyze) if shot_indices is not None else None, source_video_path)
         update_task(task_id, "analyzing", done=0, total=total, msg=f"AI 分析中：{strategy.mode}")
         app_logger.info(
             f"[分析路由] video_id={video_id}, mode={strategy.mode}, reason={strategy.reason}, "
@@ -406,7 +421,7 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                     shot_index=shot.index,
                     total_shots=total,
                     duration=shot.duration,
-                    video_path=video.filepath,
+                    video_path=source_video_path,
                     start_time=shot.start_time,
                     end_time=shot.end_time,
                     analysis_unit=analysis_unit,
@@ -478,10 +493,10 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             try:
                 if strategy.mode == "whole_video":
                     update_task(task_id, "analyzing", done=0, total=1, msg="整片上下文分析中")
-                    context_result = await analyze_whole_video_context(video.filepath, shots_to_analyze, video_id=video.id)
+                    context_result = await analyze_whole_video_context(source_video_path, shots_to_analyze, video_id=video.id)
                 else:
                     context_result = await analyze_chunked_context(
-                        video.filepath,
+                        source_video_path,
                         shots_to_analyze,
                         SHOTS_DIR,
                         video_id=video.id,

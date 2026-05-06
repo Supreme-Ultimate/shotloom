@@ -659,6 +659,68 @@ class TestAuthorizationBoundaries:
         assert r.status_code == 200
 
 
+class TestVideoPathFallback:
+    def test_detect_uses_existing_shared_upload_when_db_has_stale_backend_path(self, tmp_path, monkeypatch):
+        r = register("stale_path@example.com")
+        token = r.json()["access_token"]
+        user_id = r.json()["user_id"]
+
+        stale_dir = tmp_path / "app" / "backend" / "uploads"
+        shared_dir = tmp_path / "shared" / "uploads"
+        stale_dir.mkdir(parents=True)
+        shared_dir.mkdir(parents=True)
+        shared_file = shared_dir / "same-name.mp4"
+        shared_file.write_bytes(b"fake video")
+
+        db = get_db_session()
+        try:
+            video = Video(
+                user_id=user_id,
+                filename="same-name.mp4",
+                filepath=str(stale_dir / "same-name.mp4"),
+                duration=10.0,
+                fps=25.0,
+                status="completed",
+                error_msg="old error",
+            )
+            db.add(video)
+            db.commit()
+            video_id = video.id
+        finally:
+            db.close()
+
+        from services.shot_detector import ShotBoundary
+
+        seen = {}
+
+        def fake_detect(path, threshold):
+            seen["detect_path"] = path
+            return [ShotBoundary(index=0, start_time=0.0, end_time=10.0, duration=10.0)]
+
+        def fake_thumbs(path, shots, video_id):
+            seen["thumb_path"] = path
+            return [None]
+
+        monkeypatch.setattr(config, "UPLOADS_DIR", shared_dir)
+        monkeypatch.setattr("services.video_path.UPLOADS_DIR", shared_dir)
+        monkeypatch.setattr(analysis_router, "detect_shots", fake_detect)
+        monkeypatch.setattr("services.clip_extractor.extract_thumbnails_only", fake_thumbs)
+
+        res = client.post(f"/api/detect/{video_id}", headers=auth_headers(token))
+
+        assert res.status_code == 200
+        assert seen["detect_path"] == str(shared_file)
+        assert seen["thumb_path"] == str(shared_file)
+        db = get_db_session()
+        try:
+            video = db.query(Video).filter(Video.id == video_id).first()
+            assert video.filepath == str(shared_file)
+            assert video.status == "detected"
+            assert video.error_msg is None
+        finally:
+            db.close()
+
+
 class TestClipExtractorTimestamps:
     def test_output_rate_rounds_fractional_source_rate(self):
         from fractions import Fraction

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { message } from 'antd'
 import api from '../utils/api'
 import { API_BASE_URL } from '../config'
 import { AnalysisResult, Shot, TaskProgress } from '../types/analysis'
@@ -221,9 +222,10 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
       await loadData()
       setSelectedIndex(0)
     } catch (err: unknown) {
-      console.error('镜头检测失败:', getApiErrorStatus(err), getApiErrorData(err), getApiErrorMessage(err, '镜头检测失败'))
+      const errorMessage = getApiErrorMessage(err, '镜头检测失败')
+      console.error('镜头检测失败:', getApiErrorStatus(err), getApiErrorData(err), errorMessage)
+      message.error(errorMessage)
       setData((prev) => prev ? updateAnalysisState(prev, 'error', prev.shots) : prev)
-      throw err
     } finally {
       setDetecting(false)
     }
