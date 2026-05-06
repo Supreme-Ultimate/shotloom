@@ -978,7 +978,7 @@ class TestContextAnalyzer:
         assert result["shots"][2]["audio"]["transcript_timestamps"] == "11.420s-12.120s; 12.120s-12.620s"
         assert result["shots"][3]["audio"]["transcript_timestamps"] == "12.900s-15.042s"
 
-    def test_coarse_cross_shot_transcript_is_not_split_by_text_guessing(self, monkeypatch):
+    def test_coarse_cross_shot_transcript_is_assigned_once_by_largest_overlap(self, monkeypatch):
         from types import SimpleNamespace
         import services.context_analyzer as context_analyzer
 
@@ -1000,10 +1000,9 @@ class TestContextAnalyzer:
 
         result = context_analyzer._call_context_model("video.mp4", shots, "whole_video")
 
-        assert result["shots"][2]["audio"]["dialogue"] == "了却凡尘，渡劫成神，恐怕我要魂飞魄散。"
+        assert result["shots"][2]["audio"]["dialogue"] == "无"
         assert result["shots"][3]["audio"]["dialogue"] == "了却凡尘，渡劫成神，恐怕我要魂飞魄散。"
-        assert result["shots"][2]["audio"]["transcript_precision"] == "coarse_cross_shot"
-        assert result["shots"][3]["audio"]["transcript_precision"] == "coarse_cross_shot"
+        assert result["shots"][3]["audio"]["transcript_precision"] == "coarse_assigned_by_overlap"
 
     def test_chunk_prompt_uses_relative_times_with_original_context(self):
         from types import SimpleNamespace

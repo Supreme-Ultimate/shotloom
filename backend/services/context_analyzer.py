@@ -241,17 +241,20 @@ def _remap_transcript_to_shots(raw: dict[str, Any], shot_map: dict[int, dict[str
     }
     assigned: dict[int, list[dict[str, Any]]] = {idx: [] for idx in relative_bounds}
 
-    coarse_cross_shot: set[int] = set()
+    coarse_assigned_by_overlap: set[int] = set()
     for entry in sorted(entries, key=lambda item: (item["start"], item["end"])):
         overlaps = _entry_overlaps(entry, relative_bounds)
         if overlaps:
             if len(overlaps) > 1:
-                for idx, _overlap_start, _overlap_end in overlaps:
-                    item = dict(entry)
-                    item["start"] = entry["start"]
-                    item["end"] = entry["end"]
-                    assigned[idx].append(item)
-                    coarse_cross_shot.add(idx)
+                idx, _overlap_start, _overlap_end = max(
+                    overlaps,
+                    key=lambda item: (item[2] - item[1], item[0]),
+                )
+                item = dict(entry)
+                item["start"] = entry["start"]
+                item["end"] = entry["end"]
+                assigned[idx].append(item)
+                coarse_assigned_by_overlap.add(idx)
             else:
                 idx, overlap_start, overlap_end = overlaps[0]
                 item = dict(entry)
@@ -281,9 +284,9 @@ def _remap_transcript_to_shots(raw: dict[str, Any], shot_map: dict[int, dict[str
             if speakers:
                 audio["speaker"] = speakers
             audio.setdefault("sound_type", "对白/旁白")
-            if idx in coarse_cross_shot:
-                audio["transcript_precision"] = "coarse_cross_shot"
-                analysis["transcript_precision"] = "coarse_cross_shot"
+            if idx in coarse_assigned_by_overlap:
+                audio["transcript_precision"] = "coarse_assigned_by_overlap"
+                analysis["transcript_precision"] = "coarse_assigned_by_overlap"
             else:
                 audio.pop("transcript_precision", None)
                 analysis.pop("transcript_precision", None)
