@@ -1121,6 +1121,80 @@ class TestContextAnalysisWorker:
             db.close()
 
 
+    def test_worker_auto_generates_continuity_when_all_shots_analyzed(self):
+        r = register("auto_continuity@example.com")
+        user_id = r.json()["user_id"]
+        video_id = self._create_context_video(user_id, shot_count=2)
+        from task_store import create_task, get_task_progress
+        create_task("auto_continuity_task", video_id, user_id, 2, None)
+        updates = []
+
+        async def fake_context(_path, _shots, **_kwargs):
+            return {
+                "shots": {
+                    0: {"what": "A", "analysis_source": "whole_video"},
+                    1: {"what": "B", "analysis_source": "whole_video"},
+                },
+                "segments": [{"shot_indices": [0, 1], "summary": "AB"}],
+            }
+
+        async def fake_continuity(shots_data):
+            return {"continuity": {"summary": "auto"}, "shot_count": len(shots_data)}
+
+        def fake_update_task(task_id, stage, done=None, total=None, msg=None):
+            if task_id == "auto_continuity_task":
+                updates.append((stage, done, total, msg))
+            return None
+
+        with (
+            patch.object(analysis_router, "choose_analysis_strategy", return_value=type("S", (), {"mode": "whole_video", "reason": "test"})()),
+            patch.object(analysis_router, "analyze_whole_video_context", side_effect=fake_context),
+            patch.object(analysis_router, "analyze_continuity", side_effect=fake_continuity),
+            patch.object(analysis_router, "update_task", side_effect=fake_update_task),
+            patch.object(analysis_router, "analyze_shot") as analyze_mock,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            import asyncio
+            asyncio.run(ORIGINAL_RUN_ANALYSIS(video_id, "auto_continuity_task", user_id))
+            analyze_mock.assert_not_called()
+
+        db = get_db_session()
+        try:
+            va = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+            assert va.continuity_report["continuity"]["summary"] == "auto"
+            assert va.segments_report["segments"][0]["summary"] == "AB"
+            assert ("continuity", 0, 1, "生成整体分析…") in updates
+            assert ("completed", 2, 2, None) in updates
+        finally:
+            db.close()
+
+    def test_worker_skips_auto_continuity_when_some_shots_unanalyzed(self):
+        r = register("skip_auto_continuity@example.com")
+        user_id = r.json()["user_id"]
+        video_id = self._create_context_video(user_id, shot_count=3)
+        from task_store import create_task
+        create_task("skip_auto_continuity_task", video_id, user_id, 1, [0])
+
+        async def fake_analyze_shot(**_kwargs):
+            return {"what": "only one", "analysis_mode": "shot_clip"}
+
+        with (
+            patch.object(analysis_router, "choose_analysis_strategy", return_value=type("S", (), {"mode": "shot_fallback", "reason": "test"})()),
+            patch.object(analysis_router, "analyze_shot", side_effect=fake_analyze_shot),
+            patch.object(analysis_router, "analyze_continuity") as continuity_mock,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            import asyncio
+            asyncio.run(ORIGINAL_RUN_ANALYSIS(video_id, "skip_auto_continuity_task", user_id, [0]))
+            continuity_mock.assert_not_called()
+
+        db = get_db_session()
+        try:
+            va = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+            assert va is None or va.continuity_report is None
+        finally:
+            db.close()
+
     def test_worker_updates_chunk_progress_and_saves_chunk_results_immediately(self):
         r = register("chunk_progress@example.com")
         user_id = r.json()["user_id"]

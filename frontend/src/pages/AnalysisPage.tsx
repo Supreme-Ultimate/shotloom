@@ -18,13 +18,34 @@ interface Props {
 
 type RightTab = 'detail' | 'segments' | 'continuity'
 
+function formatElapsed(seconds: number) {
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return mins > 0 ? `${mins}分${secs.toString().padStart(2, '0')}秒` : `${secs}秒`
+}
+
 function ProgressBar({ progress }: { progress: TaskProgress }) {
+  const [now, setNow] = useState(Date.now())
+  const startedAtRef = useRef(Date.now())
+
+  useEffect(() => {
+    if (progress.stage === 'completed' || progress.stage === 'error' || progress.stage === 'cancelled') return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [progress.stage])
+
+  useEffect(() => {
+    startedAtRef.current = Date.now()
+  }, [])
+
+  const elapsed = Math.max(0, Math.floor((now - startedAtRef.current) / 1000))
+  const isIndeterminate = progress.stage === 'analyzing' && (progress.total ?? 0) <= 1 && (progress.done ?? 0) === 0
   const analyzingLabel = progress.msg ?? `AI 分析中 ${progress.done ?? 0}/${progress.total ?? 0}`
   const labels: Record<string, string> = {
     starting: '初始化…',
     cutting_clips: '切割镜头片段…',
-    analyzing: analyzingLabel,
-    continuity: '生成整体分析…',
+    analyzing: isIndeterminate ? `${analyzingLabel} · 已进行 ${formatElapsed(elapsed)}` : analyzingLabel,
+    continuity: `生成整体分析… · 已进行 ${formatElapsed(elapsed)}`,
     completed: '分析完成',
     error: `错误：${progress.msg}`,
     cancelled: progress.msg ?? '分析已中断',
@@ -37,15 +58,24 @@ function ProgressBar({ progress }: { progress: TaskProgress }) {
     <div className="bg-[#1a1a2e] border-b border-gray-800 px-4 py-2 flex items-center gap-3">
       <div className="flex-1">
         <div className="flex justify-between text-xs text-gray-400 mb-1">
-          <span>{labels[progress.stage] ?? progress.stage}</span>
-          <span>{pct}%</span>
+          <span className="inline-flex items-center gap-2">
+            {isIndeterminate || progress.stage === 'continuity' ? <span className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse" /> : null}
+            {labels[progress.stage] ?? progress.stage}
+          </span>
+          <span>{isIndeterminate || progress.stage === 'continuity' ? '处理中' : `${pct}%`}</span>
         </div>
-        <div className="w-full bg-gray-700 rounded-full h-1.5">
-          <div
-            className={`h-1.5 rounded-full transition-all ${progress.stage === 'error' ? 'bg-red-500' : 'bg-indigo-500'}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+        {isIndeterminate || progress.stage === 'continuity' ? (
+          <div className="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden">
+            <div className="h-1.5 w-1/3 rounded-full bg-indigo-500 animate-pulse" />
+          </div>
+        ) : (
+          <div className="w-full bg-gray-700 rounded-full h-1.5">
+            <div
+              className={`h-1.5 rounded-full transition-all ${progress.stage === 'error' ? 'bg-red-500' : 'bg-indigo-500'}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        )}
       </div>
     </div>
   )

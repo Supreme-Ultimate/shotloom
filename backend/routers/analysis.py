@@ -460,6 +460,47 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             app_logger.info(f"[回退分析] {len(missing_shots)} 个镜头缺少上下文结果，使用单镜头/合并上下文回退")
             await asyncio.gather(*[analyze_one(s) for s in missing_shots])
 
+        def _all_video_shots_analyzed() -> list[Shot]:
+            all_shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
+            if not all_shots:
+                return []
+            for shot in all_shots:
+                if not shot.analysis or (isinstance(shot.analysis, dict) and shot.analysis.get("error")):
+                    return []
+            return all_shots
+
+        async def maybe_generate_auto_continuity():
+            all_analyzed_shots = _all_video_shots_analyzed()
+            if not all_analyzed_shots:
+                app_logger.info(f"[整体分析] 跳过自动生成：仍有未分析或错误镜头 video_id={video_id}")
+                return
+
+            update_task(task_id, "continuity", done=0, total=1, msg="生成整体分析…")
+            shots_data = [
+                {"index": s.index, "duration": s.duration, "analysis": s.analysis}
+                for s in all_analyzed_shots
+            ]
+            try:
+                report = await analyze_continuity(shots_data)
+            except Exception as e:
+                app_logger.error(f"[整体分析] 自动生成失败: video_id={video_id} | 错误: {e}", exc_info=True)
+                existing = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+                if not existing:
+                    existing = VideoAnalysis(video_id=video_id)
+                    db.add(existing)
+                existing.continuity_report = {"error": f"整体分析失败: {e}"}
+                db.commit()
+                return
+
+            existing = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+            if not existing:
+                existing = VideoAnalysis(video_id=video_id)
+                db.add(existing)
+            existing.continuity_report = report
+            db.commit()
+            update_task(task_id, "continuity", done=1, total=1, msg="整体分析完成")
+            app_logger.info(f"[整体分析] 自动生成完成: video_id={video_id}, shot_count={len(all_analyzed_shots)}")
+
         def apply_context_result(result: dict, source_mode: str) -> int:
             written = 0
             shot_results = result.get("shots") or {}
@@ -541,7 +582,8 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             app_logger.info(f"分析任务已取消，保留已完成结果: video_id={video_id}, task_id={task_id}")
             return
 
-        # 镜头分析完成，不自动执行整体分析；整体分析仍由用户按需触发。
+        await maybe_generate_auto_continuity()
+
         video.status = "completed"
         video.current_task_id = None
         db.commit()
