@@ -283,10 +283,13 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
       setIsAnalyzingSelected(false) // 任务启动成功后立即恢复按钮状态
       // 不要在这里清空选中状态，等任务完成后再清空
     } catch (err: unknown) {
-      console.error('分析失败:', getApiErrorStatus(err), getApiErrorData(err), getApiErrorMessage(err, '分析失败'))
+      const errorMessage = getApiErrorMessage(err, '分析失败')
+      const status = getApiErrorStatus(err)
+      console.error('分析失败:', status, getApiErrorData(err), errorMessage)
+      message.error(errorMessage, status === 402 ? 6 : 4)
       setIsAnalyzingSelected(false)
       setAnalyzingShots(new Set()) // 出错时清空分析中状态
-      setData((prev) => prev ? updateAnalysisState(prev, 'error', prev.shots) : prev)
+      setData((prev) => prev ? updateAnalysisState(prev, status === 402 ? prev.video.status : 'error', prev.shots) : prev)
     }
   }
 
