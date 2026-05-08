@@ -14,6 +14,7 @@ from config import (
     CHUNK_SEGMENT_MAX_SHOTS,
     CHUNK_SEGMENT_OVERLAP_SHOTS,
     CONTEXT_BASE64_MAX_MB,
+    SELECTED_CONTEXT_MIN_SHOTS,
 )
 from logger import app_logger
 from services.ai_analyzer import _call_model_with_retries, _extract_extended_clip, _extract_json
@@ -29,9 +30,11 @@ def choose_analysis_strategy(video_duration: float | None, shot_count: int, sele
     """Choose the primary source for shot-level analysis."""
     if app_config.ANALYSIS_ROUTER_MODE != "auto":
         return AnalysisStrategy(app_config.ANALYSIS_ROUTER_MODE, f"forced by ANALYSIS_ROUTER_MODE={app_config.ANALYSIS_ROUTER_MODE}")
-    if selected_count is not None and selected_count < shot_count:
-        return AnalysisStrategy("shot_fallback", "selected-shot reanalysis uses local fallback")
     duration = float(video_duration or 0)
+    if selected_count is not None and selected_count < shot_count:
+        if selected_count >= SELECTED_CONTEXT_MIN_SHOTS:
+            return AnalysisStrategy("chunk_segment", f"selected batch has {selected_count} shots; using chunk context")
+        return AnalysisStrategy("shot_fallback", "small selected-shot reanalysis uses local fallback")
     if video_path:
         size_mb = Path(video_path).stat().st_size / 1024 / 1024 if Path(video_path).exists() else 0
         can_use_public_url = app_config.QWEN_VIDEO_INPUT_MODE != "base64" and bool(app_config.PUBLIC_VIDEO_BASE_URL)

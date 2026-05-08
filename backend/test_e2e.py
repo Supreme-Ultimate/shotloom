@@ -875,12 +875,19 @@ class TestContextAnalyzer:
 
         assert strategy.mode == "whole_video"
 
-    def test_choose_strategy_selected_subset_uses_fallback(self):
+    def test_choose_strategy_small_selected_subset_uses_fallback(self):
         from services.context_analyzer import choose_analysis_strategy
 
-        strategy = choose_analysis_strategy(30.0, 5, selected_count=2)
+        strategy = choose_analysis_strategy(30.0, 50, selected_count=2)
 
         assert strategy.mode == "shot_fallback"
+
+    def test_choose_strategy_large_selected_subset_uses_chunk_context(self):
+        from services.context_analyzer import choose_analysis_strategy
+
+        strategy = choose_analysis_strategy(300.0, 297, selected_count=50)
+
+        assert strategy.mode == "chunk_segment"
 
     def test_choose_strategy_allows_whole_video_url_for_large_file(self, tmp_path, monkeypatch):
         import services.context_analyzer as context_analyzer
