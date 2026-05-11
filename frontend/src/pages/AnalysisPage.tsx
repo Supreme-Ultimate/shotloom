@@ -24,7 +24,19 @@ function formatElapsed(seconds: number) {
   return mins > 0 ? `${mins}分${secs.toString().padStart(2, '0')}秒` : `${secs}秒`
 }
 
-function ProgressBar({ progress }: { progress: TaskProgress }) {
+function isShotAnalyzed(shot: Shot) {
+  return Boolean(shot.analysis && !(shot.analysis as { error?: unknown }).error)
+}
+
+function ProgressBar({
+  progress,
+  analyzedCount,
+  totalShots,
+}: {
+  progress: TaskProgress
+  analyzedCount: number
+  totalShots: number
+}) {
   const [now, setNow] = useState(Date.now())
   const startedAtRef = useRef(Date.now())
 
@@ -41,9 +53,10 @@ function ProgressBar({ progress }: { progress: TaskProgress }) {
   const elapsed = Math.max(0, Math.floor((now - startedAtRef.current) / 1000))
   const isIndeterminate = progress.stage === 'analyzing' && (progress.total ?? 0) <= 1 && (progress.done ?? 0) === 0
   const analyzingLabel = progress.msg ?? `AI 分析中 ${progress.done ?? 0}/${progress.total ?? 0}`
+  const overallLabel = totalShots > 0 ? `整片已完成 ${analyzedCount}/${totalShots}` : ''
   const labels: Record<string, string> = {
     starting: '初始化…',
-    cutting_clips: '切割镜头片段…',
+    cutting_clips: `切割镜头片段… · 已进行 ${formatElapsed(elapsed)}`,
     analyzing: isIndeterminate ? `${analyzingLabel} · 已进行 ${formatElapsed(elapsed)}` : analyzingLabel,
     continuity: `生成整体分析… · 已进行 ${formatElapsed(elapsed)}`,
     completed: '分析完成',
@@ -62,8 +75,11 @@ function ProgressBar({ progress }: { progress: TaskProgress }) {
             {isIndeterminate || progress.stage === 'continuity' ? <span className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse" /> : null}
             {labels[progress.stage] ?? progress.stage}
           </span>
-          <span>{isIndeterminate || progress.stage === 'continuity' ? '处理中' : `${pct}%`}</span>
+          <span>{isIndeterminate || progress.stage === 'continuity' ? '处理中' : `当前任务 ${pct}%`}</span>
         </div>
+        {overallLabel && (
+          <div className="mb-1 text-[11px] text-gray-500">{overallLabel}</div>
+        )}
         {isIndeterminate || progress.stage === 'continuity' ? (
           <div className="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden">
             <div className="h-1.5 w-1/3 rounded-full bg-indigo-500 animate-pulse" />
@@ -372,6 +388,7 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
 
   const video = data?.video
   const shots = data?.shots ?? []
+  const analyzedShotCount = shots.filter(isShotAnalyzed).length
   const selectedShot: Shot | null = shots[selectedIndex] ?? null
   const shouldShowProgress = !!(progress && !isProgressTerminal(progress))
   const isTaskRunning = shouldShowProgress
@@ -548,7 +565,13 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
       </div>
 
       {/* 进度条 */}
-      {shouldShowProgress && <ProgressBar progress={progress} />}
+      {shouldShowProgress && (
+        <ProgressBar
+          progress={progress}
+          analyzedCount={analyzedShotCount}
+          totalShots={shots.length}
+        />
+      )}
 
       {/* 主体：三栏 */}
       <div className="flex flex-1 overflow-hidden">
