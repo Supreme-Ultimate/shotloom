@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import uuid4
 
-from database import get_db, Video, Shot, VideoAnalysis, User
+from database import get_db, Video, Shot, VideoAnalysis, User, AnalysisTask
 from services.shot_detector import detect_shots
 from services.clip_extractor import extract_shot_clips
 from services.ai_analyzer import analyze_shot, build_merged_analysis_unit
@@ -26,7 +26,7 @@ from auth import get_current_user
 from config import REDIS_URL, RUN_TASKS_INLINE, SCENE_THRESHOLD, TASK_QUEUE_NAME, TASK_STALE_MINUTES, SAFE_MODEL_VIDEO_DURATION, SHOTS_DIR, SHOT_FALLBACK_ENABLED
 from logger import app_logger
 from permissions import get_video_for_user
-from task_store import cancel_task, create_task, get_task_progress, is_task_cancelled, reconcile_active_task, update_task
+from task_store import cancel_task, create_task, get_task_progress, is_task_cancelled, reconcile_active_task, resolve_video_status, update_task
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
@@ -324,6 +324,39 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
     """后台异步分析任务"""
     from database import SessionLocal
     db = SessionLocal()
+
+    def finalize_video_state() -> None:
+        """Clear the active task and derive video status from saved shot data."""
+        current_video = db.query(Video).filter(Video.id == video_id).first()
+        if not current_video:
+            return
+
+        current_task = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
+        if current_video.current_task_id == task_id:
+            current_video.current_task_id = None
+
+        if current_task is None:
+            current_video.status = resolve_video_status(video_id)
+            if current_video.status != "error":
+                current_video.error_msg = None
+        elif current_task.stage == "error":
+            current_video.status = "error"
+            current_video.error_msg = current_video.error_msg or current_task.message or "分析失败"
+        elif current_task.stage == "cancelled":
+            current_video.status = resolve_video_status(video_id)
+            if current_video.status != "error":
+                current_video.error_msg = None
+        elif current_task.stage == "completed":
+            current_video.status = resolve_video_status(video_id)
+            if current_video.status != "error":
+                current_video.error_msg = None
+        else:
+            current_video.status = resolve_video_status(video_id)
+            if current_video.status != "error":
+                current_video.error_msg = None
+
+        db.commit()
+
     try:
         app_logger.info(f"后台分析任务开始: video_id={video_id}, task_id={task_id}")
         video = db.query(Video).filter(Video.id == video_id).first()
@@ -584,11 +617,6 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
 
         await maybe_generate_auto_continuity()
 
-        video.status = "completed"
-        video.current_task_id = None
-        db.commit()
-        app_logger.info(f"视频状态已更新为 completed: video_id={video_id}")
-
         if user_id:
             try:
                 deduct(user_id, total, video_id, db)
@@ -612,6 +640,10 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             video.current_task_id = None
             db.commit()
     finally:
+        try:
+            finalize_video_state()
+        except Exception as finalize_error:
+            app_logger.error(f"视频状态收尾失败: video_id={video_id}, task_id={task_id} | 错误: {finalize_error}", exc_info=True)
         db.close()
 
 

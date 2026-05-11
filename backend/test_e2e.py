@@ -1121,6 +1121,54 @@ class TestContextAnalysisWorker:
         finally:
             db.close()
 
+    def test_worker_keeps_partial_selection_non_completed(self):
+        r = register("partial_selection@example.com")
+        user_id = r.json()["user_id"]
+        video_id = self._create_context_video(user_id, shot_count=3)
+        task_id = "partial_selection_task"
+        from task_store import create_task, get_task_progress
+        create_task(task_id, video_id, user_id, 2, [0, 1])
+
+        db = get_db_session()
+        try:
+            video = db.query(Video).filter(Video.id == video_id).first()
+            video.status = "analyzing"
+            video.current_task_id = task_id
+            db.commit()
+        finally:
+            db.close()
+
+        async def fake_context(_path, selected_shots, **_kwargs):
+            assert [shot.index for shot in selected_shots] == [0, 1]
+            return {
+                "shots": {
+                    0: {"what": "A", "analysis_source": "whole_video"},
+                    1: {"what": "B", "analysis_source": "whole_video"},
+                },
+                "segments": [{"segment_index": 0, "shot_indices": [0, 1], "summary": "AB"}],
+            }
+
+        with (
+            patch.object(analysis_router, "choose_analysis_strategy", return_value=type("S", (), {"mode": "whole_video", "reason": "test"})()),
+            patch.object(analysis_router, "analyze_whole_video_context", side_effect=fake_context),
+            patch.object(analysis_router, "analyze_shot") as analyze_mock,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            import asyncio
+            asyncio.run(ORIGINAL_RUN_ANALYSIS(video_id, task_id, user_id, [0, 1]))
+            analyze_mock.assert_not_called()
+
+        db = get_db_session()
+        try:
+            video = db.query(Video).filter(Video.id == video_id).first()
+            shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
+            assert [shot.analysis["what"] if shot.analysis else None for shot in shots] == ["A", "B", None]
+            assert video.status == "detected"
+            assert video.current_task_id is None
+            assert get_task_progress(task_id)["stage"] == "completed"
+        finally:
+            db.close()
+
     def test_worker_falls_back_for_missing_context_shot(self):
         r = register("context_fallback@example.com")
         user_id = r.json()["user_id"]
@@ -1596,6 +1644,94 @@ class TestProgress:
             assert video.current_task_id is None
         finally:
             db.close()
+
+    def test_task_status_keeps_non_terminal_done_task_active(self):
+        r = register("done_but_running@example.com")
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=3)
+        task_id = "task_done_but_running"
+
+        db = get_db_session()
+        try:
+            video = db.query(Video).filter(Video.id == video_id).first()
+            video.status = "analyzing"
+            video.current_task_id = task_id
+            db.add(AnalysisTask(
+                id=task_id,
+                video_id=video_id,
+                user_id=user_id,
+                stage="analyzing",
+                done=3,
+                total=3,
+                updated_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
+        finally:
+            db.close()
+
+        from task_store import reconcile_active_task
+        video_ref = type("VideoRef", (), {"id": video_id, "current_task_id": task_id})()
+        progress = reconcile_active_task(video_ref, stale_after=timedelta(minutes=30))
+
+        assert progress == {"stage": "analyzing", "done": 3, "total": 3}
+        db = get_db_session()
+        try:
+            saved = db.query(Video).filter(Video.id == video_id).first()
+            assert saved.status == "analyzing"
+            assert saved.current_task_id == task_id
+        finally:
+            db.close()
+
+    def test_cleanup_terminal_queue_jobs_removes_terminal_and_missing_jobs(self, monkeypatch):
+        r = register("queue_cleanup@example.com")
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=1)
+
+        db = get_db_session()
+        try:
+            db.add(AnalysisTask(
+                id="task_cleanup_error",
+                video_id=video_id,
+                user_id=user_id,
+                stage="error",
+                done=0,
+                total=1,
+            ))
+            db.add(AnalysisTask(
+                id="task_cleanup_active",
+                video_id=video_id,
+                user_id=user_id,
+                stage="queued",
+                done=0,
+                total=1,
+            ))
+            db.commit()
+        finally:
+            db.close()
+
+        class FakeJob:
+            def __init__(self, task_id):
+                self.id = f"job_{task_id}"
+                self.args = (video_id, task_id, user_id, None)
+                self.deleted = False
+
+            def delete(self, remove_from_queue=True):
+                self.deleted = remove_from_queue
+
+        jobs = [
+            FakeJob("task_cleanup_error"),
+            FakeJob("task_cleanup_missing"),
+            FakeJob("task_cleanup_active"),
+        ]
+        fake_queue = type("FakeQueue", (), {"jobs": jobs, "remove": lambda self, _job_id: 1})()
+
+        import task_store
+        monkeypatch.setattr(task_store, "_analysis_queue", lambda: fake_queue)
+
+        assert task_store.cleanup_terminal_queue_jobs() == 2
+        assert jobs[0].deleted is True
+        assert jobs[1].deleted is True
+        assert jobs[2].deleted is False
 
 
 # ─── 运行入口 ───────────────────────────────────────────────────────────────────

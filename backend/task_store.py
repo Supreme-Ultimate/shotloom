@@ -4,8 +4,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from redis import Redis
+from rq import Queue
+
 import database
-from database import AnalysisTask, Video
+from database import AnalysisTask, Shot, Video
+from config import REDIS_URL, TASK_QUEUE_NAME
 
 
 TERMINAL_STAGES = {"completed", "error", "cancelled", "not_found"}
@@ -28,13 +32,91 @@ def is_terminal_stage(stage: str | None) -> bool:
     return stage in TERMINAL_STAGES
 
 
-def is_progress_complete(task: AnalysisTask) -> bool:
-    return task.total > 0 and task.done >= task.total
+def _analysis_queue() -> Queue:
+    return Queue(TASK_QUEUE_NAME, connection=Redis.from_url(REDIS_URL))
+
+
+def _job_task_id(job) -> str | None:
+    args = list(getattr(job, "args", []) or [])
+    if len(args) < 2:
+        return None
+    task_id = args[1]
+    return str(task_id) if task_id else None
+
+
+def cleanup_terminal_queue_jobs(task_ids: set[str] | None = None, video_ids: set[int] | None = None) -> int:
+    """Remove queued jobs whose tasks are already terminal or missing."""
+    db = database.SessionLocal()
+    removed = 0
+    try:
+        try:
+            queue = _analysis_queue()
+            queued_jobs = list(queue.jobs)
+        except Exception:
+            return 0
+
+        for job in queued_jobs:
+            task_id = _job_task_id(job)
+            if not task_id:
+                continue
+            if task_ids is not None and task_id not in task_ids:
+                continue
+
+            task = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
+            should_remove = task is None or is_terminal_stage(task.stage)
+            if task is not None and video_ids is not None and task.video_id not in video_ids:
+                should_remove = False
+            if not should_remove:
+                continue
+
+            try:
+                job.delete(remove_from_queue=True)
+                removed += 1
+            except Exception:
+                try:
+                    queue.remove(job.id)
+                    removed += 1
+                except Exception:
+                    pass
+        return removed
+    finally:
+        db.close()
+
+
+def resolve_video_status(video_id: int) -> str:
+    """Derive the best visible video status from the saved shot analyses."""
+    db = database.SessionLocal()
+    try:
+        shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
+        if not shots:
+            return "detected"
+
+        any_analysis = False
+        any_error = False
+        all_analyzed = True
+        for shot in shots:
+            analysis = shot.analysis
+            if not analysis:
+                all_analyzed = False
+                continue
+            any_analysis = True
+            if isinstance(analysis, dict) and analysis.get("error"):
+                any_error = True
+                all_analyzed = False
+
+        if any_error:
+            return "error"
+        if all_analyzed and any_analysis:
+            return "completed"
+        return "detected"
+    finally:
+        db.close()
 
 
 def create_task(task_id: str, video_id: int, user_id: int, total: int, shot_indices: list[int] | None) -> None:
     db = database.SessionLocal()
     try:
+        cleanup_terminal_queue_jobs()
         task = AnalysisTask(
             id=task_id,
             video_id=video_id,
@@ -68,6 +150,9 @@ def update_task(task_id: str, stage: str, done: int | None = None, total: int | 
         db.commit()
     finally:
         db.close()
+
+    if is_terminal_stage(stage):
+        cleanup_terminal_queue_jobs(task_ids={task_id})
 
 
 def get_task(task_id: str) -> AnalysisTask | None:
@@ -106,12 +191,17 @@ def is_task_cancelled(task_id: str) -> bool:
 
 def cancel_task(task_id: str, video_id: int | None = None, message: str = "分析已中断") -> bool:
     db = database.SessionLocal()
+    should_cleanup = False
+    result = False
     try:
         task = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
         if not task:
+            should_cleanup = True
             return False
         if is_terminal_stage(task.stage):
-            return True
+            should_cleanup = True
+            result = True
+            return result
 
         now = utcnow()
         task.stage = "cancelled"
@@ -123,12 +213,17 @@ def cancel_task(task_id: str, video_id: int | None = None, message: str = "分�
         video = db.query(Video).filter(Video.id == resolved_video_id).first()
         if video and video.current_task_id == task_id:
             video.current_task_id = None
-            video.status = "completed" if task.done > 0 else "detected"
+            video.status = resolve_video_status(resolved_video_id)
             video.error_msg = None
         db.commit()
-        return True
+        should_cleanup = True
+        result = True
+        return result
     finally:
         db.close()
+        if should_cleanup:
+            cleanup_terminal_queue_jobs(task_ids={task_id})
+    return result
 
 
 def mark_task_and_video_error(
@@ -138,6 +233,7 @@ def mark_task_and_video_error(
 ) -> None:
     """Mark a task failed and clear its active pointer on the owning video."""
     db = database.SessionLocal()
+    should_cleanup = False
     try:
         task = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
         resolved_video_id = video_id
@@ -156,8 +252,11 @@ def mark_task_and_video_error(
                 video.error_msg = message
                 video.current_task_id = None
         db.commit()
+        should_cleanup = True
     finally:
         db.close()
+        if should_cleanup:
+            cleanup_terminal_queue_jobs(task_ids={task_id})
 
 
 def reconcile_active_task(
@@ -182,13 +281,19 @@ def reconcile_active_task(
 
         if task is None:
             current.current_task_id = None
+            current.status = resolve_video_status(current.id)
+            if current.status != "error":
+                current.error_msg = None
             db.commit()
             video.current_task_id = None
+            video.status = current.status
+            video.error_msg = current.error_msg
+            cleanup_terminal_queue_jobs(video_ids={current.id})
             return None
 
         should_clear = False
         should_mark_error = False
-        if is_terminal_stage(task.stage) or is_progress_complete(task):
+        if is_terminal_stage(task.stage):
             should_clear = True
         else:
             updated_at = as_aware_utc(task.updated_at) or as_aware_utc(task.created_at) or utcnow()
@@ -205,11 +310,19 @@ def reconcile_active_task(
             current.error_msg = message
 
         if should_clear:
+            if task.stage == "error":
+                current.status = "error"
+                current.error_msg = task.message or message
+            else:
+                current.status = resolve_video_status(current.id)
+                if current.status != "error":
+                    current.error_msg = None
             current.current_task_id = None
             db.commit()
             video.current_task_id = None
             video.status = current.status
             video.error_msg = current.error_msg
+            cleanup_terminal_queue_jobs(task_ids={task.id}, video_ids={current.id})
             return None
 
         progress: dict[str, Any] = {
