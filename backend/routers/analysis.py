@@ -327,11 +327,12 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
 
     def finalize_video_state() -> None:
         """Clear the active task and derive video status from saved shot data."""
-        current_video = db.query(Video).filter(Video.id == video_id).first()
+        db.expire_all()
+        current_video = db.query(Video).populate_existing().filter(Video.id == video_id).first()
         if not current_video:
             return
 
-        current_task = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
+        current_task = db.query(AnalysisTask).populate_existing().filter(AnalysisTask.id == task_id).first()
         if current_video.current_task_id == task_id:
             current_video.current_task_id = None
 
