@@ -9,7 +9,7 @@ import ShotTimeline from '../components/ShotTimeline'
 import ContinuityReport from '../components/ContinuityReport'
 import SegmentReport from '../components/SegmentReport'
 import { useSSEProgress } from '../hooks/useSSEProgress'
-import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
+import { getApiErrorData, getApiErrorMessage, getApiErrorStatus, isCreditOrQuotaError } from '../utils/error'
 
 interface Props {
   videoId: number
@@ -286,10 +286,10 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
       const errorMessage = getApiErrorMessage(err, '分析失败')
       const status = getApiErrorStatus(err)
       console.error('分析失败:', status, getApiErrorData(err), errorMessage)
-      message.error(errorMessage, status === 402 ? 6 : 4)
+      message.error(errorMessage, isCreditOrQuotaError(err) ? 6 : 4)
       setIsAnalyzingSelected(false)
       setAnalyzingShots(new Set()) // 出错时清空分析中状态
-      setData((prev) => prev ? updateAnalysisState(prev, status === 402 ? prev.video.status : 'error', prev.shots) : prev)
+      setData((prev) => prev ? updateAnalysisState(prev, isCreditOrQuotaError(err) ? prev.video.status : 'error', prev.shots) : prev)
     }
   }
 

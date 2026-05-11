@@ -26,3 +26,17 @@ export function getApiErrorStatus(error: unknown): number | undefined {
 export function getApiErrorData(error: unknown): unknown {
   return (error as ApiErrorLike).response?.data
 }
+
+export function isCreditOrQuotaError(error: unknown): boolean {
+  const status = getApiErrorStatus(error)
+  const message = getApiErrorMessage(error, '')
+  const normalized = message.toLowerCase()
+
+  // App credits are explicit 402 responses from our backend.
+  if (status === 402 && message.includes('积分不足')) return true
+
+  // Model-provider quota errors must be matched by explicit provider markers.
+  return normalized.includes('insufficient_quota')
+    || normalized.includes('current quota')
+    || normalized.includes('token-limit')
+}
