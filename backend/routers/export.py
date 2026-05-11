@@ -22,8 +22,6 @@ def export_report(
         app_logger.info(f"开始导出: video_id={video_id}, format={format}")
 
         video = get_video_for_user(video_id, current_user, db)
-        if video.status != "completed":
-            raise HTTPException(400, "分析尚未完成，无法导出")
 
         shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
         va = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()

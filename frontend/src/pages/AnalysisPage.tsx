@@ -514,7 +514,7 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
               {cancellingAnalysis ? '中断中...' : '中断分析'}
             </button>
           )}
-          {video?.status === 'completed' && (
+          {video && (
             <>
               <button
                 onClick={() => handleExport('excel')}

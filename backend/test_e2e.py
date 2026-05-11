@@ -1323,6 +1323,23 @@ class TestContextAnalysisWorker:
 
 
 class TestExportCompleteness:
+    def test_export_endpoint_allows_partial_or_blank_analysis(self):
+        r = register("export_partial@example.com")
+        token = r.json()["access_token"]
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=2)
+
+        res = client.get(
+            f"/api/export/{video_id}?format=excel",
+            headers=auth_headers(token),
+        )
+
+        assert res.status_code == 200
+        wb = load_workbook(io.BytesIO(res.content))
+        assert "镜头分析" in wb.sheetnames
+        assert wb["镜头分析"]["B2"].value == 1
+        assert wb["镜头分析"]["B3"].value == 2
+
     def _export_payload(self):
         video = {"id": 1, "filename": "demo.mp4", "duration": 12.5}
         shots = [{
