@@ -27,17 +27,53 @@ def load_prompt_config() -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Prompt config not found: {path}")
     data = _load_json(path)
-    if not data.get("shot_fields") or not data.get("continuity_fields"):
+    if int(data.get("version") or 1) >= 2:
+        scopes = data.get("scopes") or {}
+        if not all(scopes.get(scope) for scope in ("shot", "segment", "overall")):
+            raise ValueError("Prompt config must include shot, segment, and overall scopes")
+    elif not data.get("shot_fields") or not data.get("continuity_fields"):
         raise ValueError("Prompt config must include shot_fields and continuity_fields")
     return data
+
+
+def get_scope_fields(config: dict[str, Any], scope: str, model_only: bool = False) -> list[dict[str, Any]]:
+    if int(config.get("version") or 1) < 2:
+        if scope == "shot":
+            return config.get("shot_fields") or []
+        if scope == "overall":
+            return config.get("continuity_fields") or []
+        return []
+
+    def filter_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        filtered = []
+        for field in fields:
+            item = dict(field)
+            children = field.get("fields") or []
+            if children:
+                item["fields"] = filter_fields(children)
+                if item["fields"]:
+                    filtered.append(item)
+            elif not model_only or field.get("source", "vision") == "vision":
+                filtered.append(item)
+        return filtered
+
+    return filter_fields(list((config.get("scopes") or {}).get(scope) or []))
 
 
 def _field_example(field: dict[str, Any]) -> Any:
     if "example" in field:
         return field["example"]
     field_type = field.get("type")
-    if field_type == "array":
+    if field_type in {"array", "string_array"}:
         return [field.get("description", "...")]
+    if field_type == "object_array":
+        return [{"value": field.get("description", "...")}]
+    if field_type == "number":
+        return 0
+    if field_type == "boolean":
+        return False
+    if field_type == "object":
+        return {}
     nested = field.get("fields")
     if nested:
         return {item["key"]: _field_example(item) for item in nested}
@@ -60,24 +96,28 @@ def _field_lines(fields: list[dict[str, Any]], prefix: str = "") -> list[str]:
     return lines
 
 
-def build_shot_prompt(shot_index: int, total_shots: int) -> str:
-    config = load_prompt_config()
-    schema = _schema_from_fields(config["shot_fields"])
+def build_shot_prompt(shot_index: int, total_shots: int, config: dict[str, Any] | None = None, transcript: str = "") -> str:
+    config = config or load_prompt_config()
+    fields = get_scope_fields(config, "shot", model_only=True)
+    schema = _schema_from_fields(fields)
+    prompts = config.get("prompts") or {}
     parts = [
-        config.get("role", "你是一位专业的影视分析师。"),
+        prompts.get("shot_role") or config.get("role", "你是一位专业的影视分析师。"),
         config.get("shot_prompt_intro", "请分析这段视频片段。").format(
             shot_index=shot_index,
             total_shots=total_shots,
         ),
     ]
-    extra = config.get("shot_extra_instructions")
+    extra = prompts.get("shot_instructions") or config.get("shot_extra_instructions")
     if extra:
         parts.append(str(extra))
+    if transcript:
+        parts.append("系统ASR文本（仅对应当前分析范围，不得改写时间戳）：\n" + transcript)
     parts.extend([
         config.get("shot_output_instruction", "直接输出 JSON，不加代码块："),
         json.dumps(schema, ensure_ascii=False, indent=2),
         "字段要求：",
-        "\n".join(_field_lines(config["shot_fields"])),
+        "\n".join(_field_lines(fields)),
     ])
     return "\n\n".join(parts)
 
@@ -155,25 +195,25 @@ def _compact_continuity_summary(shots_data: list[dict[str, Any]], fields: list[s
     if len(summary) <= max_chars:
         return summary
 
-    # Last-resort compression still preserves every shot index and duration.
-    lines = ["超压缩镜头摘要：输入较长，仅保留所有镜头的时长、景别、运镜和情绪关键词。"]
+    # Last-resort compression still preserves every shot index and duration,
+    # using the first configured summary fields rather than hard-coded keys.
+    compact_fields = ordered_fields[:3]
+    lines = ["超压缩镜头摘要：输入较长，仅保留所有镜头的时长和配置中的前三个摘要字段。"]
     for i, shot in enumerate(shots_data):
         analysis = shot.get("analysis") or {}
-        scale = _clip_text(_get_nested(analysis, "shot_scale"), 4)
-        move = _clip_text(_get_nested(analysis, "camera_movement"), 4)
-        emotion = _clip_text(_get_nested(analysis, "emotional_function"), 4)
-        lines.append(f"#{i + 1:03d} {float(shot.get('duration') or 0):.1f}s {scale}/{move}/{emotion}")
+        values = "/".join(_clip_text(_get_nested(analysis, field), 6) for field in compact_fields)
+        lines.append(f"#{i + 1:03d} {float(shot.get('duration') or 0):.1f}s {values}")
     return "\n".join(lines)[:max_chars]
 
 
-def build_continuity_summary(shots_data: list[dict[str, Any]]) -> str:
-    config = load_prompt_config()
-    fields = config.get("continuity_summary_fields") or []
+def build_continuity_summary(shots_data: list[dict[str, Any]], config: dict[str, Any] | None = None) -> str:
+    config = config or load_prompt_config()
+    fields = config.get("overall_input_fields") or config.get("continuity_summary_fields") or []
     summaries = []
     for i, shot in enumerate(shots_data):
         analysis = shot.get("analysis") or {}
         item: dict[str, Any] = {
-            "index": i + 1,
+            "index": int(shot.get("index", i)) + 1,
             "duration": shot.get("duration"),
         }
         for field in fields:
@@ -186,21 +226,23 @@ def build_continuity_summary(shots_data: list[dict[str, Any]]) -> str:
     return _compact_continuity_summary(shots_data, fields, CONTINUITY_SUMMARY_MAX_CHARS)
 
 
-def build_continuity_prompt(shots_summary: str) -> str:
-    config = load_prompt_config()
-    schema = _schema_from_fields(config["continuity_fields"])
+def build_continuity_prompt(shots_summary: str, config: dict[str, Any] | None = None) -> str:
+    config = config or load_prompt_config()
+    fields = get_scope_fields(config, "overall", model_only=True)
+    schema = _schema_from_fields(fields)
+    prompts = config.get("prompts") or {}
     parts = [
-        config.get("continuity_role", "你是一位专业的影视分析师。"),
+        prompts.get("overall_role") or config.get("continuity_role", "你是一位专业的影视分析师。"),
         "镜头数据：",
         shots_summary,
     ]
-    extra = config.get("continuity_extra_instructions")
+    extra = prompts.get("overall_instructions") or config.get("continuity_extra_instructions")
     if extra:
         parts.append(str(extra))
     parts.extend([
         config.get("continuity_output_instruction", "直接输出 JSON，不加代码块："),
         json.dumps(schema, ensure_ascii=False, indent=2),
         "字段要求：",
-        "\n".join(_field_lines(config["continuity_fields"])),
+        "\n".join(_field_lines(fields)),
     ])
     return "\n\n".join(parts)

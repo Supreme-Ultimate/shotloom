@@ -10,10 +10,8 @@ from fractions import Fraction
 from pathlib import Path
 
 import av
-import dashscope
 import config as app_config
 from openai import OpenAI
-from dashscope import MultiModalConversation
 
 from config import (
     DASHSCOPE_API_KEY,
@@ -28,13 +26,11 @@ from config import (
     CONTEXT_BASE64_MAX_MB,
     PUBLIC_VIDEO_BASE_URL,
     QWEN_VIDEO_INPUT_MODE,
-    QWEN_OMNI_OUTPUT_MODALITIES,
 )
 from prompt_config import build_shot_prompt
 from logger import app_logger
 from services.signed_video_url import build_signed_video_url
 
-dashscope.api_key = DASHSCOPE_API_KEY
 _openai_client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=DASHSCOPE_BASE_URL) if DASHSCOPE_API_KEY else None
 
 _semaphore = asyncio.Semaphore(AI_CONCURRENCY)
@@ -209,7 +205,7 @@ def _call_model_with_retries(video_path: str, user_text: str, video_id: int | No
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return _call_omni_model(video_path, user_text, video_id=video_id) if _is_omni_model() else _call_vl_model(video_path, user_text)
+            return _call_vision_model(video_path, user_text, video_id=video_id)
         except Exception as exc:
             last_error = exc
             if attempt >= attempts or not _is_transient_model_error(exc):
@@ -223,10 +219,6 @@ def _call_model_with_retries(video_path: str, user_text: str, video_id: int | No
     raise last_error or ValueError("模型调用失败")
 
 
-
-
-def _is_omni_model() -> bool:
-    return "omni" in MODEL_NAME.lower()
 
 
 def _video_data_url(video_path: str) -> str:
@@ -280,11 +272,11 @@ def _extract_text_from_openai_stream(chunks) -> str:
     return "".join(parts)
 
 
-def _call_omni_model(video_path: str, user_text: str, video_id: int | None = None) -> dict:
+def _call_vision_model(video_path: str, user_text: str, video_id: int | None = None) -> dict:
     if _openai_client is None:
-        raise ValueError("未配置 DASHSCOPE_API_KEY，无法调用 Omni 模型")
+        raise ValueError("未配置 DASHSCOPE_API_KEY，无法调用视觉模型")
 
-    completion = _openai_client.chat.completions.create(
+    response = _openai_client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
             {
@@ -298,52 +290,20 @@ def _call_omni_model(video_path: str, user_text: str, video_id: int | None = Non
                 ],
             }
         ],
-        modalities=QWEN_OMNI_OUTPUT_MODALITIES or ["text"],
-        stream=True,
-        stream_options={"include_usage": True},
     )
-    text = _extract_text_from_openai_stream(completion)
+    if not getattr(response, "choices", None):
+        raise ValueError("视觉模型未返回有效内容")
+    text = response.choices[0].message.content
+    if isinstance(text, list):
+        text = "".join(item.get("text", "") for item in text if isinstance(item, dict))
     if not text.strip():
-        raise ValueError("Omni API 未返回文本内容")
+        raise ValueError("视觉模型未返回文本内容")
     return _extract_json(text)
 
 
 def _call_vl_model(video_path: str, user_text: str) -> dict:
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"video": f"file://{video_path}"},
-                {"text": user_text},
-            ],
-        },
-    ]
-
-    response = MultiModalConversation.call(
-        model=MODEL_NAME,
-        messages=messages,
-        fps=5.0,
-        max_frames=100,
-    )
-
-    if response is None:
-        raise ValueError("API 调用返回 None，可能是网络问题或 API 配额不足")
-
-    if not hasattr(response, "output") or response.output is None:
-        raise ValueError(f"API 响应格式异常：{response}")
-
-    if not hasattr(response.output, "choices") or not response.output.choices:
-        raise ValueError(f"API 响应缺少 choices 字段：{response.output}")
-
-    output = response.output.choices[0].message.content
-    if isinstance(output, list):
-        text = " ".join(
-            item.get("text", "") for item in output if isinstance(item, dict)
-        )
-    else:
-        text = str(output)
-
-    return _extract_json(text)
+    """Compatibility shim for callers/tests that used the legacy VL branch."""
+    return _call_vision_model(video_path, user_text)
 
 
 def _extract_extended_clip(
@@ -446,6 +406,8 @@ async def analyze_shot(
     start_time: float = 0.0,
     end_time: float = 0.0,
     analysis_unit: dict | None = None,
+    analysis_config: dict | None = None,
+    transcript_context: str = "",
 ) -> dict:
     """
     分析单个镜头视频片段，返回结构化分析字典
@@ -507,6 +469,8 @@ async def analyze_shot(
             user_text = build_shot_prompt(
                 shot_index=shot_index + 1,
                 total_shots=total_shots,
+                config=analysis_config,
+                transcript=transcript_context,
             )
 
             if temp_clip_path != clip_path:

@@ -1,242 +1,104 @@
 {
-  "version": 1,
+  "version": 2,
+  "name": "短视频运营分析 v2",
+  "description": "面向短视频钩子、留存、节奏和转化的视觉与口播分析模板",
   "language": "中文",
-  "role": "你是一位专业的影视分析师，擅长从导演/摄影师的创作视角解构镜头语言。",
-  "shot_prompt_intro": "请分析这段视频片段（镜头 #{shot_index}/{total_shots}）。请同时理解画面与音轨：台词、旁白、歌词、环境声、音乐和音效都要纳入分析。",
-  "shot_output_instruction": "输出以下 JSON 结构（所有字段必填，用中文，直接输出 JSON，不加代码块）：",
-  "shot_fields": [
-    {
-      "key": "shot_scale",
-      "description": "远景|全景|中景|近景|特写|大特写 之一"
-    },
-    {
-      "key": "composition",
-      "description": "构图方式的具体描述"
-    },
-    {
-      "key": "camera_movement",
-      "description": "固定|推|拉|摇|移|跟|升降|手持 之一或组合"
-    },
-    {
-      "key": "lighting",
-      "description": "光线类型和方向，明暗对比描述"
-    },
-    {
-      "key": "color_tone",
-      "description": "色调、色温、饱和度的整体描述"
-    },
-    {
-      "key": "content_description",
-      "description": "画面中发生了什么，人物动作/表情/环境的客观描述"
-    },
-    {
-      "key": "time_evidence",
-      "description": "用于判断本镜头内容的时间证据；如果是合并上下文片段，请写目标镜头在输入片段中的相对时间范围"
-    },
-    {
-      "key": "on_screen_text",
-      "description": "画面中出现的所有文字内容（字幕、标题、标识牌等），如果没有则填'无'"
-    },
-    {
-      "key": "dialogue",
-      "description": "请优先根据音轨识别对话/旁白/歌词；如果没有可辨识人声则填'无'"
-    },
-    {
-      "key": "audio",
-      "description": "声音分析",
-      "fields": [
-        {
-          "key": "dialogue",
-          "description": "逐字记录音轨中的对话/旁白/歌词；没有则填'无'"
-        },
-        {
-          "key": "speaker",
-          "description": "说话者/旁白/歌手身份、声线、口音或方言；没有则填'无'"
-        },
-        {
-          "key": "sound_type",
-          "description": "人声|音乐|环境声|音效|静音|混合 之一或组合"
-        },
-        {
-          "key": "music",
-          "description": "音乐/配乐的风格、情绪、节奏；没有则填'无'"
-        },
-        {
-          "key": "ambient_sound",
-          "description": "雨声、脚步、车流、风声等环境声；没有则填'无'"
-        },
-        {
-          "key": "speaker_emotion",
-          "description": "从声音判断说话者/演唱者情绪；没有人声则填'无'"
-        },
-        {
-          "key": "transcript_timestamps",
-          "description": "如可判断，给出该镜头内台词/歌词的起止时间；没有则填'无'"
-        }
-      ]
-    },
-    {
-      "key": "audiovisual_sync",
-      "description": "声音与画面的同步/反差/互补关系"
-    },
-    {
-      "key": "audio_narrative_role",
-      "description": "声音在叙事中的作用，如交代信息、制造悬念、强化情绪、转场等"
-    },
-    {
-      "key": "what",
-      "description": "用一句话概括这个镜头的核心视觉信息"
-    },
-    {
-      "key": "how",
-      "description": "拍摄者具体用了哪些技术手法来实现这个效果"
-    },
-    {
-      "key": "why",
-      "description": "导演/摄影师为什么做这个选择？这个决策服务于什么叙事或情感目的？"
-    },
-    {
-      "key": "narrative_level",
-      "description": "叙事层级",
-      "fields": [
-        {
-          "key": "scene",
-          "description": "所处场景的时空背景"
-        },
-        {
-          "key": "event",
-          "description": "当前镜头中发生的具体事件"
-        },
-        {
-          "key": "information",
-          "description": "这个镜头向观众传递了什么新信息或暗示"
-        }
-      ]
-    },
-    {
-      "key": "emotional_function",
-      "description": "这个镜头制造的情绪体验"
-    },
-    {
-      "key": "narrative_decision",
-      "description": "创作者在这里做的关键叙事决策是什么（如：信息揭示时机/视角选择/冲突呈现方式）"
-    },
-    {
-      "key": "rhythm_contribution",
-      "description": "慢节奏|快节奏|中等节奏，以及对全片节奏的贡献"
-    }
-  ],
-  "continuity_role": "你是一位专业的影视分析师。以下是一部视频所有镜头的分析数据（JSON 数组）。请基于这些数据，输出一个整体分析报告。",
-  "continuity_output_instruction": "请输出以下 JSON 结构（用中文，直接输出 JSON，不要加代码块）：",
-  "continuity_summary_fields": [
-    "shot_scale",
-    "camera_movement",
-    "emotional_function",
-    "rhythm_contribution",
-    "narrative_decision",
-    "what",
-    "why",
-    "audio.sound_type",
-    "audiovisual_sync"
-  ],
-  "continuity_fields": [
-    {
-      "key": "continuity",
-      "description": "连贯性",
-      "fields": [
-        {
-          "key": "shot_scale_flow",
-          "description": "景别变化的整体趋势和逻辑"
-        },
-        {
-          "key": "movement_coherence",
-          "description": "运镜衔接是否流畅，剪辑点的动作/方向连贯性评估"
-        },
-        {
-          "key": "emotional_arc",
-          "description": "情绪曲线描述，如：紧张→舒缓→高潮"
-        },
-        {
-          "key": "color_continuity",
-          "description": "色调变化是否有规律，是否用于区分叙事段落"
-        }
-      ]
-    },
-    {
-      "key": "rhythm",
-      "description": "节奏",
-      "fields": [
-        {
-          "key": "avg_shot_duration",
-          "description": "平均镜头时长（数字，秒）",
-          "example": 2.5
-        },
-        {
-          "key": "shortest_shot",
-          "description": "最短镜头时长（秒）",
-          "example": 0.8
-        },
-        {
-          "key": "longest_shot",
-          "description": "最长镜头时长（秒）",
-          "example": 6.2
-        },
-        {
-          "key": "plot_change_frequency",
-          "description": "剧情变化频率的文字描述"
-        },
-        {
-          "key": "info_density_pattern",
-          "description": "信息密度分布规律（开头/中段/结尾）"
-        },
-        {
-          "key": "pacing_assessment",
-          "description": "节奏整体评估，指出拖沓或紧凑的具体段落"
-        },
-        {
-          "key": "tension_peaks",
-          "description": "第N镜头附近是节奏高潮，原因是...",
-          "type": "array"
-        }
-      ]
-    },
-    {
-      "key": "narrative_structure",
-      "description": "叙事结构",
-      "fields": [
-        {
-          "key": "detected_genre",
-          "description": "推测的作品类型"
-        },
-        {
-          "key": "three_act",
-          "description": "三幕结构分析（如适用）"
-        },
-        {
-          "key": "key_turning_points",
-          "description": "镜头#N：转折点描述",
-          "type": "array"
-        },
-        {
-          "key": "information_release_strategy",
-          "description": "信息揭示策略分析（集中/分散/误导等）"
-        }
-      ]
-    },
-    {
-      "key": "genre_patterns",
-      "description": "类型规律",
-      "fields": [
-        {
-          "key": "structural_notes",
-          "description": "该类型常见叙事规律在本片中的体现"
-        },
-        {
-          "key": "deviation_notes",
-          "description": "本片与类型惯例的偏差之处"
-        }
-      ]
-    }
-  ],
-  "shot_extra_instructions": "请按 Qwen-Omni 音视频理解方式先完整理解输入片段，再输出 JSON：\\n1. 画面：描述该镜头时间范围内实际出现的人物、动作、表情、场景、道具、构图和可见文字。\\n2. 声音：识别台词、旁白、歌词、音乐、环境声和音效；如果有人声，请尽量逐字转写，并说明说话者/歌手的声线、口音/方言、语速、情绪和语气。\\n3. 声画同步：判断声音是否与画面同步、反差、补充信息或跨镜头延续。\\n4. 不要把相邻镜头的内容误写到当前镜头；如果输入片段是合并上下文，请优先分析提示中指定的目标镜头。"
+  "prompts": {
+    "shot_role": "你是一位专业的短视频内容导演和运营分析师。只依据画面、镜头边界和提供的ASR文本分析，不得虚构声音、人物身份或画外信息。",
+    "shot_instructions": "区分客观观察与运营判断；每项判断尽量引用当前镜头中可见的证据。ASR文本和时间戳由系统提供，是唯一可信的台词来源。输出与字段定义完全一致的JSON。",
+    "segment_role": "你是一位短视频结构与留存分析师。根据连续镜头事实和ASR台词判断段落功能。",
+    "segment_instructions": "只使用提供的镜头编号，分析钩子推进、价值交付、节奏变化、情绪和转化作用。",
+    "overall_role": "你是一位短视频增长与创作顾问。基于全部镜头和段落数据生成可执行的整体诊断。",
+    "overall_instructions": "建议必须指出对应镜头或段落证据，并按影响优先级排序；不得补写不存在的内容。"
+  },
+  "scopes": {
+    "shot": [
+      {"key":"content","label":"内容事实","fields":[
+        {"key":"visual_summary","label":"画面摘要","type":"string","source":"vision","description":"客观概括当前镜头实际出现的主体、动作和场景"},
+        {"key":"subject_action","label":"主体与动作","type":"string","source":"vision","description":"主体是谁或是什么，以及正在发生的动作"},
+        {"key":"scene","label":"场景","type":"string","source":"vision","description":"可见的时间、地点和环境信息，不确定则说明不确定"},
+        {"key":"on_screen_text","label":"画面文字","type":"string","source":"vision","description":"字幕、标题、贴纸、商品文字和标识，没有则填无"},
+        {"key":"time_evidence","label":"时间证据","type":"string","source":"computed","description":"当前镜头在原视频中的起止时间，由系统提供"}
+      ]},
+      {"key":"retention","label":"钩子与留存","fields":[
+        {"key":"hook_type","label":"钩子类型","type":"string","source":"vision","description":"视觉冲突、结果前置、人物反应、文字悬念、信息差或无明显钩子"},
+        {"key":"attention_trigger","label":"注意力触发点","type":"string","source":"vision","description":"具体是什么可见元素吸引观众继续观看"},
+        {"key":"curiosity_gap","label":"好奇缺口","type":"string","source":"vision","description":"镜头建立了什么未回答问题，没有则填无"},
+        {"key":"retention_risk","label":"流失风险","type":"string","source":"vision","description":"信息重复、主体不清、节奏停滞等具体风险，没有则填无"}
+      ]},
+      {"key":"visual_execution","label":"视觉执行","fields":[
+        {"key":"shot_scale","label":"景别","type":"string","source":"vision","description":"远景、全景、中景、近景、特写或大特写"},
+        {"key":"composition","label":"构图","type":"string","source":"vision","description":"主体位置、空间层次和视觉引导"},
+        {"key":"camera_movement","label":"运镜","type":"string","source":"vision","description":"固定、推、拉、摇、移、跟、升降、手持或组合"},
+        {"key":"lighting_color","label":"光线与色彩","type":"string","source":"vision","description":"光线方向、明暗、色温、饱和度及其视觉效果"},
+        {"key":"visual_focus","label":"视觉焦点","type":"string","source":"vision","description":"观众第一眼会看哪里以及原因"},
+        {"key":"production_technique","label":"制作手法","type":"string","source":"vision","description":"拍摄、表演、道具、字幕或后期使用的具体手法"}
+      ]},
+      {"key":"performance","label":"人物与情绪","fields":[
+        {"key":"character_performance","label":"人物表现","type":"string","source":"vision","description":"人物动作、表情、姿态和可见反应，没有人物则填无"},
+        {"key":"emotion","label":"画面情绪","type":"string","source":"vision","description":"当前镜头制造的主要情绪"},
+        {"key":"emotion_intensity","label":"情绪强度","type":"number","source":"vision","description":"0到10的情绪强度评分"}
+      ]},
+      {"key":"editing","label":"剪辑与叙事","fields":[
+        {"key":"shot_role","label":"镜头功能","type":"string","source":"vision","description":"建立、说明、证明、反应、转折、强化、过渡、行动号召或其他"},
+        {"key":"information_gain","label":"信息增量","type":"string","source":"vision","description":"相对前文新增了什么信息"},
+        {"key":"pacing","label":"节奏贡献","type":"string","source":"vision","description":"快、中、慢及其对观看节奏的作用"},
+        {"key":"transition_relation","label":"转场关系","type":"string","source":"vision","description":"与相邻镜头在动作、视线、构图、文字或信息上的衔接"},
+        {"key":"creator_intent","label":"创作者意图","type":"string","source":"vision","description":"基于证据推断该镜头服务的传播或叙事目的"}
+      ]},
+      {"key":"speech","label":"口播与字幕","fields":[
+        {"key":"transcript","label":"ASR台词","type":"string","source":"asr","description":"当前镜头时间范围内的逐字台词，由系统填充"},
+        {"key":"transcript_segments","label":"台词时间段","type":"object_array","source":"asr","description":"带绝对毫秒起止时间的台词片段，由系统填充"},
+        {"key":"language","label":"语种/方言","type":"string","source":"asr","description":"ASR返回的语种或方言，没有则留空"},
+        {"key":"speech_emotion","label":"说话情绪","type":"string","source":"asr","description":"ASR实际返回的说话情绪，没有则留空"},
+        {"key":"subtitle_speech_consistency","label":"字幕与台词一致性","type":"string","source":"vision","description":"比较可见字幕与系统提供的ASR台词，说明一致、概括、缺失或冲突"}
+      ]},
+      {"key":"optimization","label":"运营诊断","fields":[
+        {"key":"strengths","label":"有效点","type":"string_array","source":"vision","description":"该镜头对注意力、理解、情绪或转化有效的具体做法"},
+        {"key":"problems","label":"问题","type":"string_array","source":"vision","description":"基于证据指出的问题，没有则返回空数组"},
+        {"key":"suggestions","label":"优化建议","type":"string_array","source":"vision","description":"可直接执行的拍摄、剪辑、字幕或结构修改"}
+      ]}
+    ],
+    "segment": [
+      {"key":"segment_summary","label":"段落分析","fields":[
+        {"key":"title","label":"段落标题","type":"string","source":"vision","description":"简洁概括段落"},
+        {"key":"segment_type","label":"段落类型","type":"string","source":"vision","description":"钩子、铺垫、价值交付、证明、转折、高潮、CTA或过渡"},
+        {"key":"summary","label":"内容摘要","type":"string","source":"vision","description":"该段落发生了什么"},
+        {"key":"hook_progression","label":"钩子推进","type":"string","source":"vision","description":"如何建立、强化或兑现好奇心"},
+        {"key":"value_delivery","label":"价值交付","type":"string","source":"vision","description":"向观众交付的信息、情绪或利益"},
+        {"key":"retention_change","label":"留存变化","type":"string","source":"vision","description":"预计留存上升、稳定或下降以及原因"},
+        {"key":"rhythm_change","label":"节奏变化","type":"string","source":"vision","description":"镜头密度和信息密度变化"},
+        {"key":"speech_visual_coordination","label":"口播字幕配合","type":"string","source":"vision","description":"画面、字幕与ASR台词如何互相支持"},
+        {"key":"emotional_progression","label":"情绪推进","type":"string","source":"vision","description":"段落内情绪如何变化"},
+        {"key":"conversion_role","label":"转化作用","type":"string","source":"vision","description":"该段落对关注、互动、购买或下一步行动的作用"},
+        {"key":"issues","label":"段落问题","type":"string_array","source":"vision","description":"具体问题"},
+        {"key":"suggestions","label":"段落建议","type":"string_array","source":"vision","description":"可执行修改"}
+      ]}
+    ],
+    "overall": [
+      {"key":"strategy","label":"整体运营诊断","fields":[
+        {"key":"content_positioning","label":"内容定位","type":"string","source":"vision","description":"内容主题与账号定位"},
+        {"key":"target_audience","label":"目标观众","type":"string","source":"vision","description":"最可能被内容吸引的人群"},
+        {"key":"value_proposition","label":"核心价值","type":"string","source":"vision","description":"观众观看后获得什么"},
+        {"key":"opening_hook","label":"开场钩子","type":"string","source":"vision","description":"开场有效性及证据"},
+        {"key":"content_structure","label":"内容结构","type":"string","source":"vision","description":"开场、展开、兑现、收束结构"},
+        {"key":"clarity","label":"信息清晰度","type":"string","source":"vision","description":"信息是否易懂及障碍"},
+        {"key":"retention_structure","label":"留存结构","type":"string","source":"vision","description":"可能的留存高点和流失点"},
+        {"key":"pacing_curve","label":"节奏曲线","type":"string","source":"vision","description":"全片节奏变化"},
+        {"key":"visual_consistency","label":"视觉一致性","type":"string","source":"vision","description":"构图、色彩、字幕和风格一致性"},
+        {"key":"speech_subtitle_strategy","label":"口播字幕策略","type":"string","source":"vision","description":"基于ASR与可见字幕评估信息配合"},
+        {"key":"cta_conversion","label":"CTA与转化","type":"string","source":"vision","description":"行动号召是否明确自然"},
+        {"key":"strengths","label":"核心优势","type":"string_array","source":"vision","description":"最值得保留的做法"},
+        {"key":"retention_risks","label":"流失风险","type":"string_array","source":"vision","description":"按出现顺序列出风险"},
+        {"key":"priority_actions","label":"优先修改项","type":"string_array","source":"vision","description":"按影响从高到低排列的具体修改"},
+        {"key":"reusable_patterns","label":"可复用模式","type":"string_array","source":"vision","description":"可用于后续内容的方法"}
+      ]}
+    ]
+  },
+  "overall_input_fields": [
+    "content.visual_summary", "retention.hook_type", "retention.attention_trigger",
+    "retention.retention_risk", "editing.shot_role", "editing.information_gain",
+    "editing.pacing", "speech.transcript", "optimization.strengths",
+    "optimization.problems", "optimization.suggestions"
+  ]
 }

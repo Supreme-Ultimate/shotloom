@@ -2,6 +2,9 @@
 测试脚本：验证进度更新修复是否有效
 """
 import asyncio
+import pytest
+
+pytestmark = pytest.mark.asyncio
 
 # 模拟全局进度字典
 _task_progress = {}

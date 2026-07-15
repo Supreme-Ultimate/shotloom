@@ -4,11 +4,12 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 import av
 
-from database import get_db, Shot, VideoAnalysis, User
+from database import get_db, Shot, VideoAnalysis, VideoTranscript, User
 from config import THUMBNAILS_DIR
 from auth import get_current_user
 from permissions import get_video_for_user
 from services.video_path import resolve_video_path
+from services.analysis_config import get_or_create_video_config, video_has_results
 
 router = APIRouter(prefix="/api", tags=["results"])
 
@@ -23,6 +24,10 @@ def get_results(
 
     shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
     va = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+    config_row = get_or_create_video_config(video_id, db)
+    transcript = db.query(VideoTranscript).filter(VideoTranscript.video_id == video_id).first()
+    has_results = video_has_results(video_id, db)
+    legacy_results = has_results and config_row.active_snapshot is None
 
     return {
         "video": {
@@ -47,6 +52,11 @@ def get_results(
         ],
         "overall_analysis": va.continuity_report if va else None,
         "segments": va.segments_report if va else None,
+        "analysis_schema": config_row.active_snapshot if has_results else config_row.draft_config,
+        "config_revision": config_row.draft_revision,
+        "active_config_revision": config_row.active_revision,
+        "draft_config_dirty": legacy_results or bool(config_row.active_hash and config_row.active_hash != config_row.draft_hash),
+        "transcript_status": transcript.status if transcript else None,
     }
 
 

@@ -21,7 +21,7 @@ export const UPLOAD_LIMIT_LABEL = MAX_UPLOAD_SIZE_MB >= 1024 && MAX_UPLOAD_SIZE_
   ? `${MAX_UPLOAD_SIZE_MB / 1024}GB`
   : `${MAX_UPLOAD_SIZE_MB}MB`
 
-// 单个视频最大时长，需与后端 MAX_VIDEO_DURATION_SECONDS 保持一致。默认 1 小时，匹配 Qwen3.5-Omni 视频输入限制。
+// 单个视频最大时长，需与后端 MAX_VIDEO_DURATION_SECONDS 保持一致。默认 1 小时。
 const parsedMaxVideoDurationSeconds = Number(import.meta.env.VITE_MAX_VIDEO_DURATION_SECONDS || '3600')
 export const MAX_VIDEO_DURATION_SECONDS = Number.isFinite(parsedMaxVideoDurationSeconds) && parsedMaxVideoDurationSeconds > 0
   ? parsedMaxVideoDurationSeconds

@@ -135,6 +135,90 @@ class VideoAnalysis(Base):
         self._segments_report = json.dumps(value, ensure_ascii=False) if value else None
 
 
+class AnalysisPreset(Base):
+    __tablename__ = "analysis_presets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    schema_version = Column(Integer, default=2, nullable=False)
+    is_system = Column(Boolean, default=False, nullable=False)
+    _config = Column("config", Text, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def config(self):
+        return json.loads(self._config)
+
+    @config.setter
+    def config(self, value):
+        self._config = json.dumps(value, ensure_ascii=False)
+
+
+class VideoAnalysisConfig(Base):
+    __tablename__ = "video_analysis_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(Integer, ForeignKey("videos.id"), unique=True, nullable=False, index=True)
+    _draft_config = Column("draft_config", Text, nullable=False)
+    _active_snapshot = Column("active_snapshot", Text, nullable=True)
+    draft_revision = Column(Integer, default=1, nullable=False)
+    active_revision = Column(Integer, nullable=True)
+    draft_hash = Column(String, nullable=False)
+    active_hash = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def draft_config(self):
+        return json.loads(self._draft_config)
+
+    @draft_config.setter
+    def draft_config(self, value):
+        self._draft_config = json.dumps(value, ensure_ascii=False)
+
+    @property
+    def active_snapshot(self):
+        return json.loads(self._active_snapshot) if self._active_snapshot else None
+
+    @active_snapshot.setter
+    def active_snapshot(self, value):
+        self._active_snapshot = json.dumps(value, ensure_ascii=False) if value else None
+
+
+class VideoTranscript(Base):
+    __tablename__ = "video_transcripts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(Integer, ForeignKey("videos.id"), unique=True, nullable=False, index=True)
+    model = Column(String, nullable=False)
+    provider_task_id = Column(String, nullable=True)
+    status = Column(String, default="pending", nullable=False)
+    language = Column(String, nullable=True)
+    _result = Column("result", Text, nullable=True)
+    _usage = Column("usage", Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def result(self):
+        return json.loads(self._result) if self._result else None
+
+    @result.setter
+    def result(self, value):
+        self._result = json.dumps(value, ensure_ascii=False) if value is not None else None
+
+    @property
+    def usage(self):
+        return json.loads(self._usage) if self._usage else None
+
+    @usage.setter
+    def usage(self, value):
+        self._usage = json.dumps(value, ensure_ascii=False) if value is not None else None
+
+
 # ─── 分析任务表 ─────────────────────────────────────────────────────────────────
 
 class AnalysisTask(Base):
@@ -159,6 +243,25 @@ class AnalysisTask(Base):
     @shot_indices.setter
     def shot_indices(self, value):
         self._shot_indices = json.dumps(value) if value is not None else None
+
+
+class AnalysisTaskSnapshot(Base):
+    """Immutable schema bound to a queued task so later edits cannot alter its output."""
+    __tablename__ = "analysis_task_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(String, ForeignKey("analysis_tasks.id"), unique=True, nullable=False, index=True)
+    config_revision = Column(Integer, nullable=True)
+    _config = Column("config", Text, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+    @property
+    def config(self):
+        return json.loads(self._config)
+
+    @config.setter
+    def config(self, value):
+        self._config = json.dumps(value, ensure_ascii=False)
 
 
 # ─── 初始化 ─────────────────────────────────────────────────────────────────────

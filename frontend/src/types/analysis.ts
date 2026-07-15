@@ -17,6 +17,7 @@ export interface NarrativeLevel {
 }
 
 export interface ShotAnalysis {
+  [key: string]: unknown
   shot_scale: string
   composition: string
   camera_movement: string
@@ -141,10 +142,39 @@ export interface AnalysisResult {
   shots: Shot[]
   overall_analysis?: ContinuityReport
   segments?: VideoSegmentReport
+  analysis_schema?: AnalysisSchema
+  config_revision?: number
+  draft_config_dirty?: boolean
+  transcript_status?: string | null
+}
+
+export type AnalysisFieldType = 'string' | 'number' | 'boolean' | 'string_array' | 'object' | 'object_array'
+export type AnalysisFieldSource = 'vision' | 'asr' | 'computed'
+
+export interface AnalysisField {
+  key: string
+  label: string
+  type?: AnalysisFieldType
+  source?: AnalysisFieldSource
+  description?: string
+  fields?: AnalysisField[]
+}
+
+export interface AnalysisSchema {
+  version: number
+  name?: string
+  description?: string
+  prompts?: Record<string, string>
+  scopes: {
+    shot: AnalysisField[]
+    segment: AnalysisField[]
+    overall: AnalysisField[]
+  }
+  overall_input_fields?: string[]
 }
 
 export interface TaskProgress {
-  stage: 'starting' | 'cutting_clips' | 'analyzing' | 'continuity' | 'completed' | 'error' | 'cancelled' | 'not_found'
+  stage: 'starting' | 'transcribing' | 'cutting_clips' | 'analyzing' | 'visual_analyzing' | 'segment_analysis' | 'continuity' | 'completed' | 'error' | 'cancelled' | 'not_found'
   done?: number
   total?: number
   msg?: string

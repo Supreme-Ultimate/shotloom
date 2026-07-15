@@ -18,6 +18,8 @@ from config import (
 )
 from logger import app_logger
 from services.ai_analyzer import _call_model_with_retries, _extract_extended_clip, _extract_json
+from prompt_config import get_scope_fields
+from services.asr_analyzer import inject_asr_fields, transcript_for_range, transcript_prompt
 
 
 @dataclass
@@ -66,7 +68,7 @@ def _context_prompt(shots: list, mode: str, start_time: float = 0.0) -> str:
 重要规则：
 1. 镜头边界是唯一可信边界，不要新增、删除、拆分或重编号镜头；shot_index 和 shot_indices 必须使用边界列表中 # 后面的零基索引。
 2. 边界时间是当前输入视频片段内的相对时间；括号中的原视频时间只用于理解上下文，不能用来定位当前输入片段。
-3. 先按 Qwen-Omni 音视频理解方式通看当前输入片段：按相对时间轴理解 storyline、visible text、speakers/transcript、音乐、环境声、音效，再把观察结果映射回下方镜头边界。
+3. 按 Qwen3.7 视觉理解方式通看当前输入片段：只分析 storyline、visible text 和可见动作，再把观察结果映射回下方镜头边界；不得声称听见音轨。
 4. 必须先输出 global_transcript：把整段视频内所有对白/旁白/歌词按真实出现时间切到最小可听短句/短语，列出 start_time、end_time、speaker、content。
 5. 如果一句话跨越镜头边界，必须在 global_transcript 中按镜头边界附近的真实语音时间拆成多条短语级记录；不要输出一条横跨多个镜头的粗时间戳。
 6. 每个镜头的描述必须对应它在当前输入片段中的相对时间范围；不要把前一个/后一个镜头的画面、台词或动作挪到本镜头，尤其不要把整段视频的所有台词放进第一个镜头。
@@ -155,6 +157,74 @@ def _context_prompt(shots: list, mode: str, start_time: float = 0.0) -> str:
 
 
 _NO_DIALOGUE_VALUES = {"", "无", "没有", "none", "null", "n/a", "无对白", "无台词"}
+
+
+def _field_example(field: dict[str, Any]) -> Any:
+    children = field.get("fields") or []
+    if children:
+        return {child["key"]: _field_example(child) for child in children}
+    field_type = field.get("type", "string")
+    if field_type in {"string_array", "object_array"}:
+        return []
+    if field_type == "number":
+        return 0
+    if field_type == "boolean":
+        return False
+    return field.get("description") or ""
+
+
+def _scope_example(config: dict[str, Any], scope: str) -> dict[str, Any]:
+    return {
+        field["key"]: _field_example(field)
+        for field in get_scope_fields(config, scope, model_only=True)
+    }
+
+
+def _dynamic_context_prompt(
+    shots: list,
+    mode: str,
+    start_time: float,
+    analysis_config: dict[str, Any],
+    transcript_result: dict[str, Any] | None,
+) -> str:
+    boundaries = _shot_boundaries_text(shots, start_time=start_time)
+    transcript_lines = []
+    for shot in shots:
+        segments = transcript_for_range(transcript_result, shot.start_time, shot.end_time)
+        transcript_lines.append(f"镜头 #{shot.index}:\n{transcript_prompt(segments) or '无台词'}")
+    prompts = analysis_config.get("prompts") or {}
+    output_schema = {
+        "shots": [{"shot_index": 0, **_scope_example(analysis_config, "shot")}],
+        "segments": [{"segment_index": 0, "shot_indices": [0], **_scope_example(analysis_config, "segment")}],
+    }
+    return f"""
+{prompts.get('shot_role') or '你是一位专业短视频分析师。'}
+
+不可覆盖的系统规则：
+1. 当前模型只负责画面与提供文本的分析，不得声称听见音乐、环境声或音效。
+2. 镜头边界和系统ASR是唯一可信的时间与台词来源；不得新增、删除或重编号镜头。
+3. shot_index 和 shot_indices 使用下方 # 后的零基索引。
+4. 每个镜头必须只描述其时间范围内实际可见的内容；推断与事实要明确区分。
+5. 只输出符合给定结构的 JSON，不要 Markdown。
+
+分析模式：{mode}
+当前片段原视频起点：{start_time:.3f}s
+镜头边界：
+{boundaries}
+
+系统ASR（绝对原视频时间）：
+{chr(10).join(transcript_lines)}
+
+镜头补充要求：
+{prompts.get('shot_instructions') or ''}
+
+段落角色与要求：
+{prompts.get('segment_role') or ''}
+{prompts.get('segment_instructions') or ''}
+
+输出结构及字段说明：
+{__import__('json').dumps(output_schema, ensure_ascii=False, indent=2)}
+""".strip()
 
 
 def _parse_seconds(value: Any) -> float | None:
@@ -336,8 +406,20 @@ def _normalize_segment(raw: dict[str, Any], source: str, chunk_index: int | None
     return segment
 
 
-def _call_context_model(video_path: str, shots: list, source: str, start_time: float = 0.0, chunk_index: int | None = None, video_id: int | None = None) -> dict[str, Any]:
-    prompt = _context_prompt(shots, source, start_time)
+def _call_context_model(
+    video_path: str,
+    shots: list,
+    source: str,
+    start_time: float = 0.0,
+    chunk_index: int | None = None,
+    video_id: int | None = None,
+    analysis_config: dict[str, Any] | None = None,
+    transcript_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if analysis_config:
+        prompt = _dynamic_context_prompt(shots, source, start_time, analysis_config, transcript_result)
+    else:
+        prompt = _context_prompt(shots, source, start_time)
     raw = _call_model_with_retries(video_path, prompt, video_id=video_id)
     if isinstance(raw, str):
         raw = _extract_json(raw)
@@ -346,7 +428,17 @@ def _call_context_model(video_path: str, shots: list, source: str, start_time: f
         idx, analysis = _normalize_shot_result(item, source, chunk_index)
         if idx is not None and analysis:
             shot_map[idx] = analysis
-    _remap_transcript_to_shots(raw, shot_map, shots, start_time)
+    if transcript_result is not None:
+        for shot in shots:
+            analysis = shot_map.setdefault(int(shot.index), {})
+            inject_asr_fields(
+                analysis,
+                transcript_for_range(transcript_result, shot.start_time, shot.end_time),
+                shot.start_time,
+                shot.end_time,
+            )
+    else:
+        _remap_transcript_to_shots(raw, shot_map, shots, start_time)
     segments = []
     for item in raw.get("segments", []):
         segment = _normalize_segment(item, source, chunk_index)
@@ -355,10 +447,19 @@ def _call_context_model(video_path: str, shots: list, source: str, start_time: f
     return {"shots": shot_map, "segments": segments, "raw": raw}
 
 
-async def analyze_whole_video_context(video_path: str, shots: list, video_id: int | None = None) -> dict[str, Any]:
+async def analyze_whole_video_context(
+    video_path: str,
+    shots: list,
+    video_id: int | None = None,
+    analysis_config: dict[str, Any] | None = None,
+    transcript_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     app_logger.info(f"[上下文分析] 使用整片分析: shots={len(shots)}")
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: _call_context_model(video_path, shots, "whole_video", video_id=video_id))
+    return await loop.run_in_executor(None, lambda: _call_context_model(
+        video_path, shots, "whole_video", video_id=video_id,
+        analysis_config=analysis_config, transcript_result=transcript_result,
+    ))
 
 
 def build_shot_chunks(shots: list, max_duration: float = CHUNK_SEGMENT_DURATION, max_shots: int = CHUNK_SEGMENT_MAX_SHOTS, overlap_shots: int = CHUNK_SEGMENT_OVERLAP_SHOTS) -> list[list]:
@@ -382,7 +483,15 @@ def build_shot_chunks(shots: list, max_duration: float = CHUNK_SEGMENT_DURATION,
     return chunks
 
 
-async def analyze_chunked_context(video_path: str, shots: list, temp_dir: str | Path, video_id: int | None = None, on_chunk_complete=None) -> dict[str, Any]:
+async def analyze_chunked_context(
+    video_path: str,
+    shots: list,
+    temp_dir: str | Path,
+    video_id: int | None = None,
+    on_chunk_complete=None,
+    analysis_config: dict[str, Any] | None = None,
+    transcript_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     chunks = build_shot_chunks(shots)
     app_logger.info(f"[上下文分析] 使用分块段落分析: chunks={len(chunks)}, shots={len(shots)}")
     merged_shots: dict[int, dict[str, Any]] = {}
@@ -396,10 +505,14 @@ async def analyze_chunked_context(video_path: str, shots: list, temp_dir: str | 
         chunk_path = temp_dir / f"context_chunk_{chunk_index}_{chunk[0].index}_{chunk[-1].index}.mp4"
         try:
             _extract_extended_clip(video_path, str(chunk_path), start, end)
-            result = await loop.run_in_executor(
-                None,
-                lambda: _call_context_model(str(chunk_path), chunk, "chunk_segment", start, chunk_index, video_id=None),
-            )
+            if analysis_config is None and transcript_result is None:
+                call = lambda: _call_context_model(str(chunk_path), chunk, "chunk_segment", start, chunk_index, video_id=None)
+            else:
+                call = lambda: _call_context_model(
+                    str(chunk_path), chunk, "chunk_segment", start, chunk_index, video_id=None,
+                    analysis_config=analysis_config, transcript_result=transcript_result,
+                )
+            result = await loop.run_in_executor(None, call)
             merged_shots.update(result["shots"])
             merged_segments.extend(result["segments"])
             if on_chunk_complete:

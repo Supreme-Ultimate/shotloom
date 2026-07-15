@@ -12,7 +12,7 @@
   <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=0f172a" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
   <img alt="Docker" src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
-  <img alt="Qwen" src="https://img.shields.io/badge/Qwen-Omni-7C3AED?style=for-the-badge" />
+  <img alt="Qwen" src="https://img.shields.io/badge/Qwen3.7%20%2B%20Qwen--ASR-7C3AED?style=for-the-badge" />
   <img alt="License" src="https://img.shields.io/badge/License-MIT-D6A24D?style=for-the-badge" />
 </p>
 
@@ -111,13 +111,17 @@ Minimum required variables:
 DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
 SECRET_KEY=replace-with-a-random-strong-secret
 ENV=development
+PUBLIC_VIDEO_BASE_URL=https://your-public-shotloom-domain.example.com
 ```
+
+The default preset contains Qwen ASR fields, so `PUBLIC_VIDEO_BASE_URL` must be reachable by Alibaba Cloud before analysis can start. If it is missing, the backend rejects the task without deleting previous results.
 
 Common optional variables:
 
 ```env
-MODEL_NAME=qwen3.5-omni-plus
-CONTINUITY_MODEL_NAME=qwen-max
+VISION_MODEL_NAME=qwen3.7-plus
+ASR_MODEL_NAME=qwen3-asr-flash-filetrans
+CONTINUITY_MODEL_NAME=qwen3.7-plus
 PROMPT_CONFIG_PATH=backend/prompt_configs/default.json
 MIN_MODEL_VIDEO_DURATION=2.0
 SAFE_MODEL_VIDEO_DURATION=3.0
@@ -152,8 +156,10 @@ ShotLoom can derive shot-level analysis from whole-video context for short video
 | `CHUNK_SEGMENT_MAX_SHOTS` | `80` | Max shots per chunk for chunked segment analysis. |
 | `CHUNK_SEGMENT_OVERLAP_SHOTS` | `2` | Overlapping shots between adjacent chunks. |
 | `SHOT_FALLBACK_ENABLED` | `true` | Fall back to shot-level analysis when context analysis misses shots. |
-| `QWEN_VIDEO_INPUT_MODE` | `auto` | Qwen Omni video input mode: `auto` uses Base64 for small files and signed URLs for large files; force with `base64` or `url`. |
-| `QWEN_OMNI_OUTPUT_MODALITIES` | `text` | Omni output modalities. Keep `text` for analysis to avoid extra generated-audio cost. |
+| `QWEN_VIDEO_INPUT_MODE` | `auto` | Qwen video input mode: `auto` uses Base64 for small files and signed URLs for large files; force with `base64` or `url`. |
+| `VISION_MODEL_NAME` | `qwen3.7-plus` | Model for visual, shot, segment, and content-operation analysis. |
+| `ASR_MODEL_NAME` | `qwen3-asr-flash-filetrans` | Model for full-video speech transcription and timestamps. |
+| `ASR_API_BASE_URL` | Singapore async endpoint | Must match the region of the API key. |
 | `PUBLIC_VIDEO_BASE_URL` | empty | Public base URL reachable by Qwen, for example `https://your-domain.com/shotloom`. |
 | `SIGNED_VIDEO_URL_EXPIRE_SECONDS` | `1800` | Signed video URL TTL in seconds. |
 | `SIGNED_VIDEO_URL_SECRET` | empty | Dedicated signing secret; use a random production value. Falls back to `SECRET_KEY` if empty. |
@@ -165,13 +171,16 @@ When `PUBLIC_VIDEO_BASE_URL` is configured and the source video exceeds `CONTEXT
 
 ### Custom Prompts And Analysis Fields
 
-The default profile lives at `backend/prompt_configs/default.json`. Copy it and set `PROMPT_CONFIG_PATH` to your JSON file to customize:
+The default profile lives at `backend/prompt_configs/default.json`. Signed-in users can edit it visually for each video and save reusable private presets:
 
-- Per-shot role, prompt text, and output fields: `shot_fields`
-- Whole-video prompt text and output fields: `continuity_fields`
-- Which per-shot fields are summarized for whole-video analysis: `continuity_summary_fields`
+- `scopes.shot`: per-shot fields
+- `scopes.segment`: segment fields
+- `scopes.overall`: whole-video fields
+- `prompts`: role and instruction prompts for all three scopes
 
-Fields support nested objects and arrays. Restart `backend` and `worker` after changes. For Docker deployments, bind-mount custom config files if they are not built into the image.
+Fields support nested objects and arrays. Each analysis stores an immutable config snapshot, so draft edits do not alter historical reports. Applying a changed config requires a full reanalysis. Excel and PDF columns are generated from the same snapshot.
+
+Database migration note: this release adds the `analysis_presets`, `video_analysis_configs`, `video_transcripts`, and `analysis_task_snapshots` tables. Back up production databases, then run `cd backend && alembic upgrade head`; local development startup still creates missing tables through SQLAlchemy. Existing results retain their legacy format until a full reanalysis activates the v2 schema.
 
 Optional WeChat login variables:
 
@@ -320,7 +329,7 @@ Production notes:
 - Set `FRONTEND_URL` / `CORS_ORIGINS` to your real domain.
 - Never use the template `SECRET_KEY` or `POSTGRES_PASSWORD`.
 - Upload limits are controlled by backend `MAX_UPLOAD_SIZE_MB`, frontend `VITE_MAX_UPLOAD_SIZE_MB`, and Nginx `client_max_body_size` / `NGINX_CLIENT_MAX_BODY_SIZE`; keep all three aligned.
-- Single-video duration defaults to 3600 seconds (1 hour) to match the Qwen3.5-Omni video input limit; keep backend `MAX_VIDEO_DURATION_SECONDS` and frontend `VITE_MAX_VIDEO_DURATION_SECONDS` aligned if you change it.
+- Single-video duration defaults to 3600 seconds (1 hour); keep backend `MAX_VIDEO_DURATION_SECONDS` and frontend `VITE_MAX_VIDEO_DURATION_SECONDS` aligned if you change it.
 
 ## Manual Development
 

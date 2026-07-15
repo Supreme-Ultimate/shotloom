@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import time
 
 from database import init_db
-from routers import upload, analysis, results, export
+from routers import upload, analysis, results, export, analysis_config
 from routers import auth_router, wechat, admin, credits, public
 from logger import app_logger
 from config import CORS_ORIGINS
@@ -52,6 +52,7 @@ app.include_router(upload.router)
 app.include_router(analysis.router)
 app.include_router(results.router)
 app.include_router(export.router)
+app.include_router(analysis_config.router)
 
 # 新增路由
 app.include_router(auth_router.router)

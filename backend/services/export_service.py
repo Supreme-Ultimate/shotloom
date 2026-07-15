@@ -78,7 +78,133 @@ def _analysis_source_label(analysis: dict) -> str:
     return _safe(source, "单镜头")
 
 
-def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict | None = None) -> bytes:
+def _get_path(value: Any, path: str) -> Any:
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _schema_leaves(fields: list[dict[str, Any]], key_prefix: str = "", label_prefix: str = ""):
+    for field in fields:
+        key_path = f"{key_prefix}.{field['key']}" if key_prefix else field["key"]
+        label_path = f"{label_prefix} / {field['label']}" if label_prefix else field["label"]
+        children = field.get("fields") or []
+        if children:
+            yield from _schema_leaves(children, key_path, label_path)
+        else:
+            yield key_path, label_path, field
+
+
+def _display_schema_value(value: Any) -> str | float | int | bool:
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def _export_excel_v2(video: dict, shots: List[dict], analysis: dict, segments: dict | None, schema: dict[str, Any]) -> bytes:
+    wb = Workbook()
+    header_fill = PatternFill("solid", fgColor="1F3864")
+    header_font = Font(color="FFFFFF", bold=True, size=10)
+    border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+    scopes = schema.get("scopes") or {}
+
+    manifest = wb.active
+    manifest.title = "导出说明"
+    manifest_rows = [
+        ("视频文件", video.get("filename", "")),
+        ("镜头数量", len(shots)),
+        ("分析模板", schema.get("name", "")),
+        ("Schema版本", schema.get("version", "")),
+        ("视觉模型", video.get("vision_model", "qwen3.7-plus")),
+        ("ASR模型", video.get("asr_model", "qwen3-asr-flash-filetrans")),
+    ]
+    for row_i, (key, value) in enumerate(manifest_rows, 1):
+        manifest.cell(row=row_i, column=1, value=key)
+        manifest.cell(row=row_i, column=2, value=value)
+        for cell in manifest[row_i]:
+            cell.border = border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    manifest.column_dimensions["A"].width = 24
+    manifest.column_dimensions["B"].width = 90
+
+    shot_leaves = list(_schema_leaves(scopes.get("shot") or []))
+    ws = wb.create_sheet("镜头分析")
+    base_headers = ["缩略图", "镜头#", "时长(s)", "开始", "结束"]
+    _style_header_row(ws, base_headers + [label for _, label, _ in shot_leaves], header_fill, header_font, border)
+    for col in range(1, len(base_headers) + len(shot_leaves) + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 12 if col <= 5 else 28
+    for row_i, shot in enumerate(shots, 2):
+        values = ["", int(shot.get("index", row_i - 2)) + 1, round(float(shot.get("duration") or 0), 3), shot.get("start_time"), shot.get("end_time")]
+        result = shot.get("analysis") or {}
+        values.extend(_display_schema_value(_get_path(result, path)) for path, _, _ in shot_leaves)
+        for col_i, value in enumerate(values, 1):
+            if col_i == 1:
+                continue
+            cell = ws.cell(row=row_i, column=col_i, value=value)
+            cell.border = border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        thumb = shot.get("thumbnail_path")
+        if thumb and Path(thumb).exists():
+            try:
+                img = XLImage(thumb)
+                img.height, img.width = 56, 80
+                ws.add_image(img, f"A{row_i}")
+                ws.row_dimensions[row_i].height = 60
+            except Exception:
+                pass
+
+    segment_leaves = list(_schema_leaves(scopes.get("segment") or []))
+    ws_segments = wb.create_sheet("段落分析")
+    _style_header_row(ws_segments, ["段落#", "镜头"] + [label for _, label, _ in segment_leaves], header_fill, header_font, border)
+    for row_i, segment in enumerate((segments or {}).get("segments") or [], 2):
+        values = [int(segment.get("segment_index", row_i - 2)) + 1, _safe([int(i) + 1 for i in segment.get("shot_indices", [])])]
+        values.extend(_display_schema_value(_get_path(segment, path)) for path, _, _ in segment_leaves)
+        for col_i, value in enumerate(values, 1):
+            cell = ws_segments.cell(row=row_i, column=col_i, value=value)
+            cell.border = border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            ws_segments.column_dimensions[get_column_letter(col_i)].width = 18 if col_i <= 2 else 32
+
+    overall_leaves = list(_schema_leaves(scopes.get("overall") or []))
+    ws_overall = wb.create_sheet("整体分析")
+    _style_header_row(ws_overall, ["字段", "值"], header_fill, header_font, border)
+    ws_overall.column_dimensions["A"].width = 34
+    ws_overall.column_dimensions["B"].width = 96
+    for row_i, (path, label, _) in enumerate(overall_leaves, 2):
+        ws_overall.cell(row=row_i, column=1, value=label)
+        ws_overall.cell(row=row_i, column=2, value=_display_schema_value(_get_path(analysis or {}, path)))
+        for cell in ws_overall[row_i]:
+            cell.border = border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    ws_json = wb.create_sheet("完整JSON")
+    _style_header_row(ws_json, ["类型", "编号", "JSON"], header_fill, header_font, border)
+    out_row = 2
+    for shot in shots:
+        ws_json.append(["镜头", int(shot.get("index", 0)) + 1, _json_dump(shot.get("analysis") or {})])
+        out_row += 1
+    for segment in (segments or {}).get("segments") or []:
+        ws_json.append(["段落", int(segment.get("segment_index", 0)) + 1, _json_dump(segment)])
+        out_row += 1
+    ws_json.append(["整体", 1, _json_dump(analysis or {})])
+    ws_json.column_dimensions["C"].width = 120
+    for row in ws_json.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict | None = None, schema: dict[str, Any] | None = None) -> bytes:
+    if schema and int(schema.get("version") or 1) >= 2:
+        return _export_excel_v2(video, shots, analysis, segments, schema)
     wb = Workbook()
 
     # ── Sheet 1: 镜头分析 ──────────────────────────────
@@ -345,8 +471,62 @@ def export_excel(video: dict, shots: List[dict], analysis: dict, segments: dict 
     return buf.getvalue()
 
 
-def export_pdf_html(video: dict, shots: List[dict], analysis: dict, segments: dict | None = None) -> str:
+def _export_pdf_html_v2(video: dict, shots: List[dict], analysis: dict, segments: dict | None, schema: dict[str, Any]) -> str:
+    scopes = schema.get("scopes") or {}
+
+    def esc(value: Any) -> str:
+        return html.escape(str(_display_schema_value(value)))
+
+    def render_fields(value: dict[str, Any], fields: list[dict[str, Any]]) -> str:
+        blocks = []
+        for field in fields:
+            children = field.get("fields") or []
+            if children:
+                child_value = value.get(field["key"])
+                child_html = render_fields(child_value if isinstance(child_value, dict) else {}, children)
+                blocks.append(f'<section><h4>{esc(field["label"])}</h4>{child_html}</section>')
+                continue
+            item = value.get(field["key"])
+            blocks.append(f'<div class="field"><b>{esc(field["label"])}</b><span>{esc(item)}</span></div>')
+        return "".join(blocks)
+
+    shot_cards = []
+    for shot in shots:
+        thumb = ""
+        path = shot.get("thumbnail_path")
+        if path and Path(path).exists():
+            with open(path, "rb") as file:
+                thumb = '<img src="data:image/jpeg;base64,' + base64.b64encode(file.read()).decode() + '">'
+        shot_cards.append(
+            f'<article class="card"><header>{thumb}<div><h3>镜头 #{int(shot.get("index", 0)) + 1}</h3>'
+            f'<p>{float(shot.get("start_time", 0)):.3f}s → {float(shot.get("end_time", 0)):.3f}s · {float(shot.get("duration", 0)):.3f}s</p></div></header>'
+            f'{render_fields(shot.get("analysis") or {}, scopes.get("shot") or [])}</article>'
+        )
+    segment_cards = []
+    for segment in (segments or {}).get("segments") or []:
+        indices = "、".join(f"#{int(index) + 1}" for index in segment.get("shot_indices", []))
+        segment_cards.append(
+            f'<article class="card"><h3>段落 #{int(segment.get("segment_index", 0)) + 1}</h3><p>镜头：{esc(indices)}</p>'
+            f'{render_fields(segment, scopes.get("segment") or [])}</article>'
+        )
+    overall_html = render_fields(analysis or {}, scopes.get("overall") or [])
+    return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+@page{{size:A4;margin:15mm}}*{{box-sizing:border-box}}body{{font-family:'WenQuanYi Zen Hei','DejaVu Sans',sans-serif;color:#202034;font-size:11px}}
+h1{{color:#1f3864;border-bottom:3px solid #4f46e5;padding-bottom:8px}}h2{{color:#312e81;margin-top:20px}}h3{{margin:4px 0;color:#312e81}}h4{{margin:10px 0 4px;color:#4338ca}}
+.meta{{color:#6b7280}}.card{{border:1px solid #dfe3ee;border-left:4px solid #4f46e5;border-radius:7px;padding:10px;margin:10px 0;break-inside:avoid}}
+header{{display:flex;gap:12px}}header img{{width:120px;height:68px;object-fit:cover;border-radius:4px}}section{{background:#f7f7fc;padding:7px;margin-top:7px;border-radius:5px}}
+.field{{display:grid;grid-template-columns:120px 1fr;gap:8px;border-bottom:1px solid #ececf3;padding:4px 0;overflow-wrap:anywhere}}.field b{{color:#4b5563}}.field span{{white-space:pre-wrap}}
+</style></head><body><h1>短视频分析报告 — {esc(video.get('filename', ''))}</h1>
+<p class="meta">模板：{esc(schema.get('name', ''))} · Schema v{esc(schema.get('version', ''))} · 视觉 {esc(video.get('vision_model', 'qwen3.7-plus'))} · ASR {esc(video.get('asr_model', 'qwen3-asr-flash-filetrans'))}</p>
+<h2>镜头分析</h2>{''.join(shot_cards)}<h2>段落分析</h2>{''.join(segment_cards) or '<p>暂无段落</p>'}
+<h2>整体分析</h2><article class="card">{overall_html or '<p>暂无整体分析</p>'}</article></body></html>"""
+
+
+def export_pdf_html(video: dict, shots: List[dict], analysis: dict, segments: dict | None = None, schema: dict[str, Any] | None = None) -> str:
     """生成 HTML 字符串，由 WeasyPrint 转 PDF"""
+
+    if schema and int(schema.get("version") or 1) >= 2:
+        return _export_pdf_html_v2(video, shots, analysis, segments, schema)
 
     def thumb_b64(path):
         if path and Path(path).exists():

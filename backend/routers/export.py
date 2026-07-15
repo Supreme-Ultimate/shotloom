@@ -7,6 +7,8 @@ from services.export_service import export_excel, export_pdf_html
 from logger import app_logger
 from auth import get_current_user
 from permissions import get_video_for_user
+from services.analysis_config import get_or_create_video_config
+from config import VISION_MODEL_NAME, ASR_MODEL_NAME
 
 router = APIRouter(prefix="/api", tags=["export"])
 
@@ -25,11 +27,16 @@ def export_report(
 
         shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
         va = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+        config_row = get_or_create_video_config(video_id, db)
+        has_results = any(s.analysis for s in shots) or va is not None
+        schema = config_row.active_snapshot if has_results else config_row.draft_config
 
         video_dict = {
             "id": video.id,
             "filename": video.filename,
             "duration": video.duration,
+            "vision_model": VISION_MODEL_NAME,
+            "asr_model": ASR_MODEL_NAME,
         }
         shots_list = [
             {
@@ -52,7 +59,7 @@ def export_report(
 
         if format == "excel":
             app_logger.info("生成 Excel 文件")
-            data = export_excel(video_dict, shots_list, analysis_dict, segments_dict)
+            data = export_excel(video_dict, shots_list, analysis_dict, segments_dict, schema)
             app_logger.info(f"Excel 生成成功，大小: {len(data)} bytes")
             encoded_filename = quote(f"{name}_拉片报告.xlsx")
             return Response(
@@ -66,7 +73,7 @@ def export_report(
             except ImportError:
                 raise HTTPException(500, "WeasyPrint 未安装，请运行: pip install weasyprint")
             app_logger.info("生成 PDF 文件")
-            html_str = export_pdf_html(video_dict, shots_list, analysis_dict, segments_dict)
+            html_str = export_pdf_html(video_dict, shots_list, analysis_dict, segments_dict, schema)
             pdf_bytes = HTML(string=html_str).write_pdf()
             app_logger.info(f"PDF 生成成功，大小: {len(pdf_bytes)} bytes")
             encoded_filename = quote(f"{name}_拉片报告.pdf")

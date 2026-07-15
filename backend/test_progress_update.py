@@ -3,6 +3,9 @@
 """
 import asyncio
 import time
+import pytest
+
+pytestmark = pytest.mark.asyncio
 
 # 模拟 _task_progress 字典
 _task_progress = {}

@@ -38,6 +38,7 @@ def override_get_db():
 
 import config
 config.RUN_TASKS_INLINE = True
+config.PUBLIC_VIDEO_BASE_URL = "https://example.com/shotloom"
 import database
 database.engine = TEST_ENGINE
 database.SessionLocal = TestingSession
@@ -71,6 +72,29 @@ async def fake_run_analysis(_video_id, task_id, _user_id=None, _shot_indices=Non
 
 ORIGINAL_RUN_ANALYSIS = analysis_router._run_analysis
 analysis_router._run_analysis = fake_run_analysis
+
+
+def vision_only_test_config():
+    """Keep worker orchestration tests offline while exercising the v2 schema path."""
+    from copy import deepcopy
+    from prompt_config import load_prompt_config
+
+    config_data = deepcopy(load_prompt_config())
+
+    def without_asr(fields):
+        output = []
+        for field in fields:
+            item = dict(field)
+            if item.get("fields"):
+                item["fields"] = without_asr(item["fields"])
+                if item["fields"]:
+                    output.append(item)
+            elif item.get("source", "vision") != "asr":
+                output.append(item)
+        return output
+
+    config_data["scopes"]["shot"] = without_asr(config_data["scopes"]["shot"])
+    return config_data
 
 
 # ─── 工具函数 ───────────────────────────────────────────────────────────────────
@@ -872,7 +896,7 @@ class TestAnalysisWorkerGuards:
             db.close()
 
         from task_store import create_task
-        create_task("missing_clip_task", video_id, user_id, 1, None)
+        create_task("missing_clip_task", video_id, user_id, 1, None, config_snapshot=vision_only_test_config())
 
         with (
             patch.object(analysis_router, "analyze_shot") as analyze_mock,
@@ -1119,7 +1143,7 @@ class TestContextAnalysisWorker:
         user_id = r.json()["user_id"]
         video_id = self._create_context_video(user_id, shot_count=2)
         from task_store import create_task, get_task_progress
-        create_task("context_task", video_id, user_id, 2, None)
+        create_task("context_task", video_id, user_id, 2, None, config_snapshot=vision_only_test_config())
 
         async def fake_context(_path, _shots, **_kwargs):
             return {
@@ -1157,7 +1181,7 @@ class TestContextAnalysisWorker:
         video_id = self._create_context_video(user_id, shot_count=3)
         task_id = "partial_selection_task"
         from task_store import create_task, get_task_progress
-        create_task(task_id, video_id, user_id, 2, [0, 1])
+        create_task(task_id, video_id, user_id, 2, [0, 1], config_snapshot=vision_only_test_config())
 
         db = get_db_session()
         try:
@@ -1204,7 +1228,7 @@ class TestContextAnalysisWorker:
         user_id = r.json()["user_id"]
         video_id = self._create_context_video(user_id, shot_count=2)
         from task_store import create_task
-        create_task("context_fallback_task", video_id, user_id, 2, None)
+        create_task("context_fallback_task", video_id, user_id, 2, None, config_snapshot=vision_only_test_config())
 
         async def fake_context(_path, _shots, **_kwargs):
             return {
@@ -1239,7 +1263,7 @@ class TestContextAnalysisWorker:
         user_id = r.json()["user_id"]
         video_id = self._create_context_video(user_id, shot_count=2)
         from task_store import create_task, get_task_progress
-        create_task("auto_continuity_task", video_id, user_id, 2, None)
+        create_task("auto_continuity_task", video_id, user_id, 2, None, config_snapshot=vision_only_test_config())
         updates = []
 
         async def fake_context(_path, _shots, **_kwargs):
@@ -1251,7 +1275,7 @@ class TestContextAnalysisWorker:
                 "segments": [{"shot_indices": [0, 1], "summary": "AB"}],
             }
 
-        async def fake_continuity(shots_data):
+        async def fake_continuity(shots_data, _analysis_config=None):
             return {"continuity": {"summary": "auto"}, "shot_count": len(shots_data)}
 
         def fake_update_task(task_id, stage, done=None, total=None, msg=None):
@@ -1286,7 +1310,7 @@ class TestContextAnalysisWorker:
         user_id = r.json()["user_id"]
         video_id = self._create_context_video(user_id, shot_count=3)
         from task_store import create_task
-        create_task("skip_auto_continuity_task", video_id, user_id, 1, [0])
+        create_task("skip_auto_continuity_task", video_id, user_id, 1, [0], config_snapshot=vision_only_test_config())
 
         async def fake_analyze_shot(**_kwargs):
             return {"what": "only one", "analysis_mode": "shot_clip"}
@@ -1313,7 +1337,7 @@ class TestContextAnalysisWorker:
         user_id = r.json()["user_id"]
         video_id = self._create_context_video(user_id, shot_count=3)
         from task_store import create_task
-        create_task("chunk_progress_task", video_id, user_id, 3, None)
+        create_task("chunk_progress_task", video_id, user_id, 3, None, config_snapshot=vision_only_test_config())
         updates = []
         db_snapshots = []
 
@@ -1321,7 +1345,7 @@ class TestContextAnalysisWorker:
             if task_id == "chunk_progress_task" and stage == "analyzing":
                 updates.append((done, total, msg))
 
-        async def fake_chunked(_path, chunk_shots, _temp_dir, video_id=None, on_chunk_complete=None):
+        async def fake_chunked(_path, chunk_shots, _temp_dir, video_id=None, on_chunk_complete=None, **_kwargs):
             first = {"shots": {0: {"what": "A"}, 1: {"what": "B"}}, "segments": [{"shot_indices": [0, 1]}]}
             second = {"shots": {2: {"what": "C"}}, "segments": [{"shot_indices": [2]}]}
             await on_chunk_complete(first, chunk_shots[:2], 0, 2)
@@ -1640,7 +1664,7 @@ class TestSignedVideoUrls:
         assert r.headers["cache-control"] == "private, max-age=0, no-store"
 
 
-class TestOmniVideoInput:
+class TestQwenVisionAndAsr:
     def test_video_input_url_prefers_signed_public_url_for_large_file(self, tmp_path, monkeypatch):
         from services.ai_analyzer import _video_input_url
 
@@ -1670,11 +1694,11 @@ class TestOmniVideoInput:
         assert url.startswith("data:video/mp4;base64,")
 
 
-    def test_default_model_is_qwen35_omni_plus(self):
+    def test_default_model_is_qwen37_plus(self):
         from pathlib import Path
-        assert 'MODEL_NAME = os.getenv("MODEL_NAME", "qwen3.5-omni-plus")' in Path("config.py").read_text(encoding="utf-8")
+        assert 'VISION_MODEL_NAME = os.getenv("VISION_MODEL_NAME", "qwen3.7-plus")' in Path("config.py").read_text(encoding="utf-8")
 
-    def test_omni_request_uses_stream_text_modalities(self, tmp_path, monkeypatch):
+    def test_vision_request_uses_non_streaming_video_input(self, tmp_path, monkeypatch):
         import services.ai_analyzer as ai
 
         video = tmp_path / "clip.mp4"
@@ -1684,9 +1708,9 @@ class TestOmniVideoInput:
         class FakeCompletions:
             def create(self, **kwargs):
                 captured.update(kwargs)
-                delta = type("Delta", (), {"content": '{"ok": true}'})()
-                choice = type("Choice", (), {"delta": delta})()
-                return [type("Chunk", (), {"choices": [choice]})()]
+                message = type("Message", (), {"content": '{"ok": true}'})()
+                choice = type("Choice", (), {"message": message})()
+                return type("Response", (), {"choices": [choice]})()
 
         fake_client = type("Client", (), {
             "chat": type("Chat", (), {
@@ -1695,22 +1719,20 @@ class TestOmniVideoInput:
         })()
 
         monkeypatch.setattr(ai, "_openai_client", fake_client)
-        monkeypatch.setattr(ai, "MODEL_NAME", "qwen3.5-omni-plus")
-        monkeypatch.setattr(ai, "QWEN_OMNI_OUTPUT_MODALITIES", ["text"])
+        monkeypatch.setattr(ai, "MODEL_NAME", "qwen3.7-plus")
         monkeypatch.setattr(config, "QWEN_VIDEO_INPUT_MODE", "base64")
 
-        result = ai._call_omni_model(str(video), "prompt", video_id=99)
+        result = ai._call_vision_model(str(video), "prompt", video_id=99)
 
         assert result == {"ok": True}
-        assert captured["model"] == "qwen3.5-omni-plus"
-        assert captured["stream"] is True
-        assert captured["stream_options"] == {"include_usage": True}
-        assert captured["modalities"] == ["text"]
+        assert captured["model"] == "qwen3.7-plus"
+        assert "stream" not in captured
+        assert "modalities" not in captured
         content = captured["messages"][0]["content"]
         assert content[0]["type"] == "video_url"
         assert content[1] == {"type": "text", "text": "prompt"}
 
-    def test_call_model_with_retries_passes_video_id_to_omni(self, tmp_path, monkeypatch):
+    def test_call_model_with_retries_passes_video_id_to_vision(self, tmp_path, monkeypatch):
         import services.ai_analyzer as ai
 
         video = tmp_path / "large.mp4"
@@ -1721,13 +1743,223 @@ class TestOmniVideoInput:
             seen["video_id"] = video_id
             return {"ok": True}
 
-        monkeypatch.setattr(ai, "_is_omni_model", lambda: True)
-        monkeypatch.setattr(ai, "_call_omni_model", fake_call)
+        monkeypatch.setattr(ai, "_call_vision_model", fake_call)
 
         result = ai._call_model_with_retries(str(video), "prompt", video_id=123)
 
         assert result == {"ok": True}
         assert seen["video_id"] == 123
+
+    def test_word_timestamps_are_split_by_shot_range(self):
+        from services.asr_analyzer import transcript_for_range
+
+        result = {"transcripts": [{"sentences": [{
+            "begin_time": 900, "end_time": 2100, "text": "你好世界", "emotion": "neutral", "language": "zh",
+            "words": [
+                {"begin_time": 900, "end_time": 1300, "text": "你好"},
+                {"begin_time": 1300, "end_time": 2100, "text": "世界"},
+            ],
+        }]}]}
+
+        first = transcript_for_range(result, 0.0, 1.3)
+        second = transcript_for_range(result, 1.3, 3.0)
+
+        assert first[0]["text"] == "你好"
+        assert second[0]["text"] == "世界"
+        assert first[0]["end_ms"] == 1300
+
+
+class TestAnalysisConfigurationV2:
+    def test_default_config_is_valid_and_requires_asr(self):
+        from prompt_config import load_prompt_config
+        from services.analysis_config import config_requires_asr, validate_config
+
+        config_data = validate_config(load_prompt_config())
+
+        assert config_data["version"] == 2
+        assert config_requires_asr(config_data)
+        assert config_data["name"] == "短视频运营分析 v2"
+
+    def test_rejects_reserved_or_duplicate_fields(self):
+        from copy import deepcopy
+        from prompt_config import load_prompt_config
+        from services.analysis_config import validate_config
+
+        config_data = deepcopy(load_prompt_config())
+        config_data["scopes"]["shot"][0]["fields"][0]["key"] = "error"
+        with pytest.raises(ValueError, match="保留字段"):
+            validate_config(config_data)
+
+    def test_rejects_custom_asr_field_without_system_mapping(self):
+        from copy import deepcopy
+        from prompt_config import load_prompt_config
+        from services.analysis_config import validate_config
+
+        config_data = deepcopy(load_prompt_config())
+        config_data["scopes"]["shot"][0]["fields"].append({
+            "key": "ambient_sound",
+            "label": "环境声",
+            "type": "string",
+            "source": "asr",
+            "description": "不受支持的声音事件字段",
+        })
+        with pytest.raises(ValueError, match="不是系统支持的 ASR 字段"):
+            validate_config(config_data)
+
+    def test_asr_configuration_requires_public_url_before_queueing(self, monkeypatch):
+        r = register("asr_public_url@example.com")
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=1)
+        monkeypatch.setattr(analysis_router.app_config, "PUBLIC_VIDEO_BASE_URL", "")
+
+        response = client.post(f"/api/analyze/{video_id}")
+
+        assert response.status_code == 400
+        assert "PUBLIC_VIDEO_BASE_URL" in response.json()["detail"]
+        db = get_db_session()
+        try:
+            from database import VideoAnalysisConfig
+            row = db.query(VideoAnalysisConfig).filter(VideoAnalysisConfig.video_id == video_id).first()
+            assert row.active_snapshot is None
+        finally:
+            db.close()
+
+    def test_config_save_rejects_stale_revision(self):
+        r = register("config_revision@example.com")
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=1)
+        current = client.get(f"/api/videos/{video_id}/analysis-config").json()
+
+        first = client.put(
+            f"/api/videos/{video_id}/analysis-config",
+            json={"config": current["draft_config"], "revision": current["draft_revision"]},
+        )
+        stale = client.put(
+            f"/api/videos/{video_id}/analysis-config",
+            json={"config": current["draft_config"], "revision": current["draft_revision"]},
+        )
+
+        assert first.status_code == 200
+        assert stale.status_code == 409
+        assert stale.json()["detail"]["code"] == "CONFIG_REVISION_CONFLICT"
+
+    def test_queued_task_keeps_immutable_config_snapshot(self):
+        r = register("task_snapshot@example.com")
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=1)
+
+        response = client.post(f"/api/analyze/{video_id}")
+
+        assert response.status_code == 200
+        db = get_db_session()
+        try:
+            from database import AnalysisTaskSnapshot
+            snapshot = db.query(AnalysisTaskSnapshot).filter(
+                AnalysisTaskSnapshot.task_id == response.json()["task_id"]
+            ).one()
+            assert snapshot.config["version"] == 2
+            assert snapshot.config_revision == 1
+        finally:
+            db.close()
+
+    def test_queue_failure_restores_previous_results_and_snapshot(self, monkeypatch):
+        r = register("queue_rollback@example.com")
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=1)
+        db = get_db_session()
+        try:
+            shot = db.query(Shot).filter(Shot.video_id == video_id).one()
+            shot.analysis = {"shot_type": "旧结果"}
+            db.commit()
+        finally:
+            db.close()
+
+        class BrokenQueue:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def enqueue(self, *args, **kwargs):
+                raise ConnectionError("redis unavailable")
+
+        monkeypatch.setattr(analysis_router, "RUN_TASKS_INLINE", False)
+        monkeypatch.setattr(analysis_router, "Queue", BrokenQueue)
+        response = client.post(f"/api/analyze/{video_id}", json={
+            "shot_indices": None,
+            "config_revision": 1,
+            "reanalysis_mode": "replace_all_with_draft",
+        })
+
+        assert response.status_code == 503
+        db = get_db_session()
+        try:
+            from database import VideoAnalysisConfig
+            shot = db.query(Shot).filter(Shot.video_id == video_id).one()
+            video = db.query(Video).filter(Video.id == video_id).one()
+            config_row = db.query(VideoAnalysisConfig).filter(VideoAnalysisConfig.video_id == video_id).one()
+            assert shot.analysis == {"shot_type": "旧结果"}
+            assert video.current_task_id is None
+            assert config_row.active_snapshot is None
+        finally:
+            db.close()
+
+    def test_legacy_results_do_not_claim_the_new_schema(self):
+        r = register("legacy_schema@example.com")
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=1)
+        db = get_db_session()
+        try:
+            shot = db.query(Shot).filter(Shot.video_id == video_id).first()
+            shot.analysis = {"shot_type": "特写"}
+            db.commit()
+        finally:
+            db.close()
+
+        response = client.get(f"/api/results/{video_id}")
+
+        assert response.status_code == 200
+        assert response.json()["analysis_schema"] is None
+        assert response.json()["draft_config_dirty"] is True
+
+    def test_video_config_and_private_preset_round_trip(self):
+        r = register("analysis_config@example.com")
+        user_id = r.json()["user_id"]
+        video_id = create_video_with_shots(user_id, shot_count=1)
+
+        config_response = client.get(f"/api/videos/{video_id}/analysis-config")
+        assert config_response.status_code == 200
+        config_data = config_response.json()["draft_config"]
+
+        config_data["name"] = "我的短视频模板"
+        save_response = client.put(f"/api/videos/{video_id}/analysis-config", json={"config": config_data, "revision": 1})
+        assert save_response.status_code == 200
+        assert save_response.json()["draft_revision"] == 2
+
+        preset_response = client.post("/api/analysis-presets", json={"name": "私有模板", "config": config_data})
+        assert preset_response.status_code == 200
+        assert preset_response.json()["is_system"] is False
+
+        list_response = client.get("/api/analysis-presets")
+        assert list_response.status_code == 200
+        assert any(item["name"] == "短视频运营分析 v2" and item["is_system"] for item in list_response.json())
+        assert any(item["name"] == "私有模板" and not item["is_system"] for item in list_response.json())
+
+    def test_dynamic_excel_uses_schema_labels(self):
+        from openpyxl import load_workbook
+        from prompt_config import load_prompt_config
+        from services.export_service import export_excel
+
+        schema = load_prompt_config()
+        data = export_excel(
+            {"filename": "demo.mp4", "duration": 1.0},
+            [{"index": 0, "start_time": 0.0, "end_time": 1.0, "duration": 1.0, "analysis": {"content": {"visual_summary": "人物展示产品"}}}],
+            {}, {"segments": []}, schema,
+        )
+        workbook = load_workbook(io.BytesIO(data))
+        headers = [cell.value for cell in workbook["镜头分析"][1]]
+
+        assert "内容事实 / 画面摘要" in headers
+        summary_column = headers.index("内容事实 / 画面摘要") + 1
+        assert workbook["镜头分析"].cell(2, summary_column).value == "人物展示产品"
 
 
 class TestProgress:

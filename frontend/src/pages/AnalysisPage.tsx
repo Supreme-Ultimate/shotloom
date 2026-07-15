@@ -8,6 +8,7 @@ import ShotDetailPanel from '../components/ShotDetailPanel'
 import ShotTimeline from '../components/ShotTimeline'
 import ContinuityReport from '../components/ContinuityReport'
 import SegmentReport from '../components/SegmentReport'
+import AnalysisConfigDrawer from '../components/AnalysisConfigDrawer'
 import { useSSEProgress } from '../hooks/useSSEProgress'
 import { getApiErrorData, getApiErrorMessage, getApiErrorStatus, getUserFacingErrorMessage, isAppCreditError, isProviderQuotaError } from '../utils/error'
 
@@ -56,7 +57,10 @@ function ProgressBar({
   const overallLabel = totalShots > 0 ? `整片已完成 ${analyzedCount}/${totalShots}` : ''
   const labels: Record<string, string> = {
     starting: '初始化…',
+    transcribing: `Qwen ASR 全片转写… · 已进行 ${formatElapsed(elapsed)}`,
     cutting_clips: `切割镜头片段… · 已进行 ${formatElapsed(elapsed)}`,
+    visual_analyzing: analyzingLabel,
+    segment_analysis: `生成段落分析… · 已进行 ${formatElapsed(elapsed)}`,
     analyzing: isIndeterminate ? `${analyzingLabel} · 已进行 ${formatElapsed(elapsed)}` : analyzingLabel,
     continuity: `生成整体分析… · 已进行 ${formatElapsed(elapsed)}`,
     completed: '分析完成',
@@ -143,6 +147,7 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
   const [isResizingLeft, setIsResizingLeft] = useState(false)
   const [isResizingRight, setIsResizingRight] = useState(false)
   const [shouldStopAtShotEnd, setShouldStopAtShotEnd] = useState(false)
+  const [configOpen, setConfigOpen] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const progress = useSSEProgress(taskId, shotCount)
   const normalizedSceneThreshold = Math.min(100, Math.max(5, sceneThreshold || 27))
@@ -288,12 +293,20 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
       if (!confirmed) return
     }
 
+    let replaceAll = false
+    if (data?.draft_config_dirty) {
+      replaceAll = window.confirm('分析配置已经修改。应用新配置需要完整重新分析全部镜头，并覆盖旧结果、重新扣除积分。是否继续？')
+      if (!replaceAll) return
+      indices = shots.map(shot => shot.index)
+    }
     setIsAnalyzingSelected(true)
     setAnalyzingShots(new Set(indices)) // 标记正在分析的镜头
     setData((prev) => prev ? updateAnalysisState(prev, 'analyzing', prev.shots) : prev)
     try {
       const res = await api.post(`/api/analyze/${videoId}`, {
-        shot_indices: indices
+        shot_indices: replaceAll ? null : indices,
+        config_revision: data?.config_revision,
+        reanalysis_mode: replaceAll ? 'replace_all_with_draft' : 'reuse_active',
       })
       setTaskId(res.data.task_id)
       setShotCount(indices.length) // 存储镜头数量
@@ -537,6 +550,7 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
           )}
           {video && (
             <>
+              <button onClick={() => setConfigOpen(true)} disabled={isAnalysisBusy} className="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50">分析配置</button>
               <button
                 onClick={() => handleExport('excel')}
                 disabled={isExporting}
@@ -665,9 +679,9 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
           </div>
           <div className="flex-1 overflow-hidden flex flex-col">
             {rightTab === 'detail' ? (
-              <ShotDetailPanel shot={selectedShot} videoId={videoId} />
+              <ShotDetailPanel shot={selectedShot} videoId={videoId} schema={data?.analysis_schema} />
             ) : rightTab === 'segments' ? (
-              <SegmentReport report={data?.segments} />
+              <SegmentReport report={data?.segments} schema={data?.analysis_schema} />
             ) : (
               <>
                 <div className="flex-shrink-0 px-4 py-2 border-b border-gray-800">
@@ -692,13 +706,14 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
                   )}
                 </div>
                 <div className="flex-1 overflow-hidden">
-                  <ContinuityReport report={data?.overall_analysis} loading={continuityLoading} />
+                  <ContinuityReport report={data?.overall_analysis} loading={continuityLoading} schema={data?.analysis_schema} />
                 </div>
               </>
             )}
           </div>
         </div>
       </div>
+      <AnalysisConfigDrawer videoId={videoId} open={configOpen} onClose={() => setConfigOpen(false)} onSaved={loadData} />
     </div>
   )
 }

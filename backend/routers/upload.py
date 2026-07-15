@@ -5,7 +5,7 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from database import get_db, Video, User, Shot, CreditTransaction
+from database import get_db, Video, User, Shot, CreditTransaction, AnalysisTask, AnalysisTaskSnapshot, VideoAnalysisConfig, VideoTranscript
 from config import MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB, MAX_VIDEO_DURATION_SECONDS, UPLOADS_DIR, SHOTS_DIR, THUMBNAILS_DIR
 from auth import get_current_user
 from logger import app_logger
@@ -168,6 +168,12 @@ def delete_video(
     db.query(Shot).filter(Shot.video_id == video_id).delete()
     db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).delete()
     db.query(CreditTransaction).filter(CreditTransaction.video_id == video_id).delete()
+    db.query(VideoAnalysisConfig).filter(VideoAnalysisConfig.video_id == video_id).delete()
+    db.query(VideoTranscript).filter(VideoTranscript.video_id == video_id).delete()
+    task_ids = [row[0] for row in db.query(AnalysisTask.id).filter(AnalysisTask.video_id == video_id).all()]
+    if task_ids:
+        db.query(AnalysisTaskSnapshot).filter(AnalysisTaskSnapshot.task_id.in_(task_ids)).delete(synchronize_session=False)
+    db.query(AnalysisTask).filter(AnalysisTask.video_id == video_id).delete()
 
     # 删除文件系统中的产物
     try:

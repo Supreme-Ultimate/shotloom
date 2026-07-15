@@ -6,6 +6,7 @@ from datetime import timedelta
 from redis import Redis
 from rq import Queue
 import json
+import config as app_config
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -14,13 +15,15 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import uuid4
 
-from database import get_db, Video, Shot, VideoAnalysis, User, AnalysisTask
+from database import get_db, Video, Shot, VideoAnalysis, VideoTranscript, User, AnalysisTask, AnalysisTaskSnapshot
 from services.shot_detector import detect_shots
 from services.clip_extractor import extract_shot_clips
 from services.ai_analyzer import analyze_shot, build_merged_analysis_unit, normalize_model_error
 from services.context_analyzer import analyze_chunked_context, analyze_whole_video_context, choose_analysis_strategy
 from services.continuity_analyzer import analyze_continuity
 from services.video_path import resolve_video_path
+from services.analysis_config import config_requires_asr, get_or_create_video_config, require_analysis_config
+from services.asr_analyzer import ensure_video_transcript, inject_asr_fields, transcript_for_range, transcript_prompt
 from services.credits_service import check_sufficient, deduct
 from auth import get_current_user
 from config import REDIS_URL, RUN_TASKS_INLINE, SCENE_THRESHOLD, TASK_QUEUE_NAME, TASK_STALE_MINUTES, SAFE_MODEL_VIDEO_DURATION, SHOTS_DIR, SHOT_FALLBACK_ENABLED
@@ -38,6 +41,8 @@ class ShotAdjustment(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     shot_indices: Optional[List[int]] = None  # None = 全部，否则只分析指定镜头
+    config_revision: Optional[int] = None
+    reanalysis_mode: str = "reuse_active"
 
 
 class ReanalyzeContinuityRequest(BaseModel):
@@ -84,7 +89,12 @@ async def reanalyze_continuity(
 
     # 生成整体分析
     try:
-        report = await analyze_continuity(shots_data)
+        config_row = get_or_create_video_config(video_id, db)
+        if config_row.active_snapshot is None:
+            raise HTTPException(409, detail={"code": "LEGACY_RESULTS_REQUIRE_FULL_REANALYSIS"})
+        report = await analyze_continuity(shots_data, config_row.active_snapshot)
+    except HTTPException:
+        raise
     except Exception as e:
         app_logger.error(f"整体分析失败: {e}")
         raise HTTPException(500, f"整体分析失败: {normalize_model_error(e)}")
@@ -137,6 +147,10 @@ async def detect_shots_endpoint(
     # 重新检测会生成新的镜头边界；旧的单镜头分析和整体分析不再适用。
     db.query(Shot).filter(Shot.video_id == video_id).delete()
     db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).delete()
+    config_row = get_or_create_video_config(video_id, db)
+    config_row.active_snapshot = None
+    config_row.active_revision = None
+    config_row.active_hash = None
 
     # 生成缩略图（不生成切片，切片在分析时生成）
     app_logger.info(f"开始生成缩略图: video_id={video_id}, shot_count={len(shots)}")
@@ -184,6 +198,10 @@ def adjust_shots(
 
     db.query(Shot).filter(Shot.video_id == video_id).delete()
     db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).delete()
+    config_row = get_or_create_video_config(video_id, db)
+    config_row.active_snapshot = None
+    config_row.active_revision = None
+    config_row.active_hash = None
     for i, s in enumerate(body.shots):
         start = float(s["start_time"])
         end = float(s["end_time"])
@@ -210,6 +228,9 @@ async def start_analysis(
 ):
     """Step 2: 启动 AI 分析（异步后台任务）"""
     video = get_video_for_user(video_id, current_user, db)
+    active_progress = reconcile_active_task(video, timedelta(minutes=TASK_STALE_MINUTES))
+    if active_progress is not None:
+        raise HTTPException(409, detail={"code": "ANALYSIS_ALREADY_RUNNING", "task_id": video.current_task_id})
 
     shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
     if not shots:
@@ -224,25 +245,110 @@ async def start_analysis(
     if not shots_to_analyze:
         raise HTTPException(400, "没有可分析的镜头")
 
-    app_logger.info(f"启动AI分析: video_id={video_id}, shot_count={len(shots_to_analyze)}, user={current_user.email}")
+    replace_all = body.reanalysis_mode == "replace_all_with_draft"
+    if body.reanalysis_mode not in {"reuse_active", "replace_all_with_draft"}:
+        raise HTTPException(400, "不支持的 reanalysis_mode")
+    if replace_all and body.shot_indices is not None:
+        raise HTTPException(400, "应用新配置时必须完整重新分析全部镜头")
 
+    # Do all failure-prone checks before activating a snapshot or deleting results.
     check_sufficient(current_user.id, len(shots_to_analyze), db)
 
-    task_id = f"task_{uuid4().hex}"
-    create_task(task_id, video_id, current_user.id, len(shots_to_analyze), body.shot_indices)
-    update_task(task_id, "queued", done=0, total=len(shots_to_analyze))
-    app_logger.info(f"[进度初始化] task_id={task_id}, total={len(shots_to_analyze)}")
+    def validate_runtime_config(config: dict) -> None:
+        if config_requires_asr(config) and not app_config.PUBLIC_VIDEO_BASE_URL:
+            raise HTTPException(400, "当前分析配置包含 ASR 字段，请先配置 PUBLIC_VIDEO_BASE_URL 为阿里云可访问的签名视频地址")
 
-    video.status = "analyzing"
-    video.error_msg = None
-    video.current_task_id = task_id  # 保存任务 ID
+    config_row = get_or_create_video_config(video_id, db)
+    previous_config_state = (
+        config_row.active_snapshot,
+        config_row.active_revision,
+        config_row.active_hash,
+    )
+    previous_video_state = (video.status, video.error_msg)
+    previous_shot_analyses = {shot.id: shot.analysis for shot in shots} if replace_all else {}
+    previous_video_analysis = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
+    previous_reports = None
+    if previous_video_analysis:
+        previous_reports = (
+            previous_video_analysis.continuity_report,
+            previous_video_analysis.rhythm_report,
+            previous_video_analysis.segments_report,
+        )
+
+    analysis_config, _ = require_analysis_config(
+        video_id, body.config_revision, replace_all, db, before_activate=validate_runtime_config,
+    )
+    if replace_all:
+        for shot in shots:
+            shot.analysis = None
+        db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).delete()
+
+    app_logger.info(f"启动AI分析: video_id={video_id}, shot_count={len(shots_to_analyze)}, user={current_user.email}")
+
+    task_id = f"task_{uuid4().hex}"
+    reserved = (
+        db.query(Video)
+        .filter(Video.id == video_id, Video.current_task_id.is_(None))
+        .update({
+            Video.current_task_id: task_id,
+            Video.status: "analyzing",
+            Video.error_msg: None,
+        }, synchronize_session=False)
+    )
+    if reserved != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "ANALYSIS_ALREADY_RUNNING"})
+    create_task(
+        task_id, video_id, current_user.id, len(shots_to_analyze), body.shot_indices,
+        config_snapshot=analysis_config, config_revision=config_row.active_revision,
+        db_session=db,
+    )
+    app_logger.info(f"[进度初始化] task_id={task_id}, total={len(shots_to_analyze)}")
     db.commit()
 
-    if RUN_TASKS_INLINE:
-        asyncio.create_task(_run_analysis(video_id, task_id, current_user.id, body.shot_indices))
-    else:
-        queue = Queue(TASK_QUEUE_NAME, connection=Redis.from_url(REDIS_URL))
-        queue.enqueue("routers.analysis.run_analysis_job", video_id, task_id, current_user.id, body.shot_indices, job_timeout="6h")
+    queue = None
+    try:
+        if RUN_TASKS_INLINE:
+            asyncio.create_task(_run_analysis(video_id, task_id, current_user.id, body.shot_indices))
+        else:
+            queue = Queue(TASK_QUEUE_NAME, connection=Redis.from_url(REDIS_URL))
+            queue.enqueue(
+                "routers.analysis.run_analysis_job",
+                video_id, task_id, current_user.id, body.shot_indices,
+                job_id=task_id, job_timeout="6h",
+            )
+    except Exception as exc:
+        # Queue submission is outside the DB transaction; compensate so a
+        # transport failure never destroys the previous report/config state.
+        if queue is not None:
+            try:
+                queued_job = queue.fetch_job(task_id)
+                if queued_job is not None:
+                    queued_job.delete(remove_from_queue=True)
+            except Exception:
+                pass
+        db.query(AnalysisTaskSnapshot).filter(AnalysisTaskSnapshot.task_id == task_id).delete()
+        db.query(AnalysisTask).filter(AnalysisTask.id == task_id).delete()
+        current_config = get_or_create_video_config(video_id, db)
+        current_config.active_snapshot = previous_config_state[0]
+        current_config.active_revision = previous_config_state[1]
+        current_config.active_hash = previous_config_state[2]
+        if replace_all:
+            for shot in shots:
+                shot.analysis = previous_shot_analyses.get(shot.id)
+            if previous_reports is not None:
+                restored = VideoAnalysis(video_id=video_id)
+                restored.continuity_report = previous_reports[0]
+                restored.rhythm_report = previous_reports[1]
+                restored.segments_report = previous_reports[2]
+                db.add(restored)
+        restored_video = db.query(Video).filter(Video.id == video_id).first()
+        restored_video.current_task_id = None
+        restored_video.status = previous_video_state[0]
+        restored_video.error_msg = previous_video_state[1]
+        db.commit()
+        app_logger.error(f"分析任务入队失败并已回滚业务状态: video_id={video_id}, error={exc}")
+        raise HTTPException(503, "任务队列暂时不可用，原有分析结果已保留") from exc
 
     return {"task_id": task_id, "shot_count": len(shots_to_analyze)}
 
@@ -364,8 +470,23 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
         if not video:
             update_task(task_id, "error", msg="视频不存在")
             return
+        task_record = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
+        if task_record is None or task_record.stage in {"completed", "error", "cancelled"}:
+            app_logger.warning(f"忽略已补偿或已终止的队列任务: video_id={video_id}, task_id={task_id}")
+            return
 
         shots = db.query(Shot).filter(Shot.video_id == video_id).order_by(Shot.index).all()
+        config_row = get_or_create_video_config(video_id, db)
+        task_snapshot = db.query(AnalysisTaskSnapshot).filter(AnalysisTaskSnapshot.task_id == task_id).first()
+        analysis_config = task_snapshot.config if task_snapshot else (config_row.active_snapshot or config_row.draft_config)
+        transcript_result = None
+        # Jobs created through start_analysis always have an active snapshot.
+        # A missing snapshot means this is a legacy/pre-upgrade queued job; let
+        # it finish without inventing transcript data.
+        if config_requires_asr(analysis_config):
+            update_task(task_id, "transcribing", done=0, total=1, msg="Qwen ASR 全片转写中…")
+            transcript_result = await ensure_video_transcript(video_id)
+            update_task(task_id, "transcribing", done=1, total=1, msg="Qwen ASR 转写完成")
 
         # 筛选要分析的镜头
         if shot_indices is not None:
@@ -459,6 +580,18 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                     start_time=shot.start_time,
                     end_time=shot.end_time,
                     analysis_unit=analysis_unit,
+                    analysis_config=analysis_config,
+                    transcript_context=transcript_prompt(transcript_for_range(
+                        transcript_result,
+                        float((analysis_unit or {}).get("merged_start_time", shot.start_time)),
+                        float((analysis_unit or {}).get("merged_end_time", shot.end_time)),
+                    )),
+                )
+                inject_asr_fields(
+                    result,
+                    transcript_for_range(transcript_result, shot.start_time, shot.end_time),
+                    shot.start_time,
+                    shot.end_time,
                 )
                 result.setdefault("analysis_source", result.get("analysis_mode") or "shot_clip")
                 result.setdefault("analysis_mode", result.get("analysis_mode") or "shot_clip")
@@ -516,7 +649,7 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                 for s in all_analyzed_shots
             ]
             try:
-                report = await analyze_continuity(shots_data)
+                report = await analyze_continuity(shots_data, analysis_config)
             except Exception as e:
                 app_logger.error(f"[整体分析] 自动生成失败: video_id={video_id} | 错误: {e}", exc_info=True)
                 existing = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
@@ -569,14 +702,19 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
             try:
                 if strategy.mode == "whole_video":
                     update_task(task_id, "analyzing", done=0, total=1, msg="整片上下文分析中")
-                    context_result = await analyze_whole_video_context(source_video_path, shots_to_analyze, video_id=video.id)
+                    context_result = await analyze_whole_video_context(
+                        source_video_path, shots_to_analyze, video_id=video.id,
+                        analysis_config=analysis_config, transcript_result=transcript_result,
+                    )
                 else:
+                    context_kwargs = {
+                        "video_id": video.id,
+                        "on_chunk_complete": on_chunk_complete,
+                        "analysis_config": analysis_config,
+                        "transcript_result": transcript_result,
+                    }
                     context_result = await analyze_chunked_context(
-                        source_video_path,
-                        shots_to_analyze,
-                        SHOTS_DIR,
-                        video_id=video.id,
-                        on_chunk_complete=on_chunk_complete,
+                        source_video_path, shots_to_analyze, SHOTS_DIR, **context_kwargs,
                     )
             except Exception as e:
                 context_failed = True

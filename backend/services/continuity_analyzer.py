@@ -22,9 +22,9 @@ from services.ai_analyzer import is_model_provider_quota_error
 _openai_client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=DASHSCOPE_BASE_URL) if DASHSCOPE_API_KEY else None
 
 
-def _build_summary(shots_data: list) -> str:
+def _build_summary(shots_data: list, analysis_config: dict | None = None) -> str:
     """Build the model input summary according to prompt config."""
-    return build_continuity_summary(shots_data)
+    return build_continuity_summary(shots_data, analysis_config)
 
 
 def _extract_text_from_response(response) -> str:
@@ -101,17 +101,6 @@ def _call_continuity_model(prompt: str) -> dict:
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            # Qwen-Omni requires streaming; qwen-max also supports normal chat completions.
-            if "omni" in CONTINUITY_MODEL_NAME.lower():
-                chunks = _openai_client.chat.completions.create(
-                    model=CONTINUITY_MODEL_NAME,
-                    messages=[{"role": "user", "content": prompt}],
-                    modalities=["text"],
-                    stream=True,
-                    stream_options={"include_usage": True},
-                )
-                return _parse_json_or_raw(_extract_text_from_stream(chunks))
-
             response = _openai_client.chat.completions.create(
                 model=CONTINUITY_MODEL_NAME,
                 messages=[{"role": "user", "content": prompt}],
@@ -130,13 +119,13 @@ def _call_continuity_model(prompt: str) -> dict:
     raise last_error or ValueError("整体分析模型调用失败")
 
 
-async def analyze_continuity(shots_data: list) -> dict:
+async def analyze_continuity(shots_data: list, analysis_config: dict | None = None) -> dict:
     """
     shots_data: list of dicts with keys: index, duration, analysis
     返回连贯性报告字典
     """
-    summary = _build_summary(shots_data)
-    prompt = build_continuity_prompt(summary)
+    summary = _build_summary(shots_data, analysis_config)
+    prompt = build_continuity_prompt(summary, analysis_config)
 
     loop = asyncio.get_event_loop()
     # 连贯性分析用 OpenAI 兼容接口，保证跟镜头分析使用同一个 base_url/地域。

@@ -8,7 +8,7 @@ from redis import Redis
 from rq import Queue
 
 import database
-from database import AnalysisTask, Shot, Video
+from database import AnalysisTask, AnalysisTaskSnapshot, Shot, Video
 from config import REDIS_URL, TASK_QUEUE_NAME
 
 
@@ -113,10 +113,21 @@ def resolve_video_status(video_id: int) -> str:
         db.close()
 
 
-def create_task(task_id: str, video_id: int, user_id: int, total: int, shot_indices: list[int] | None) -> None:
-    db = database.SessionLocal()
+def create_task(
+    task_id: str,
+    video_id: int,
+    user_id: int,
+    total: int,
+    shot_indices: list[int] | None,
+    config_snapshot: dict[str, Any] | None = None,
+    config_revision: int | None = None,
+    db_session=None,
+) -> None:
+    db = db_session or database.SessionLocal()
+    owns_session = db_session is None
     try:
-        cleanup_terminal_queue_jobs()
+        if owns_session:
+            cleanup_terminal_queue_jobs()
         task = AnalysisTask(
             id=task_id,
             video_id=video_id,
@@ -127,9 +138,17 @@ def create_task(task_id: str, video_id: int, user_id: int, total: int, shot_indi
         )
         task.shot_indices = shot_indices
         db.add(task)
-        db.commit()
+        if config_snapshot is not None:
+            snapshot = AnalysisTaskSnapshot(task_id=task_id, config_revision=config_revision)
+            snapshot.config = config_snapshot
+            db.add(snapshot)
+        if owns_session:
+            db.commit()
+        else:
+            db.flush()
     finally:
-        db.close()
+        if owns_session:
+            db.close()
 
 
 def update_task(task_id: str, stage: str, done: int | None = None, total: int | None = None, msg: str | None = None) -> None:
