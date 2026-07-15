@@ -17,7 +17,7 @@ from uuid import uuid4
 from database import get_db, Video, Shot, VideoAnalysis, User, AnalysisTask
 from services.shot_detector import detect_shots
 from services.clip_extractor import extract_shot_clips
-from services.ai_analyzer import analyze_shot, build_merged_analysis_unit
+from services.ai_analyzer import analyze_shot, build_merged_analysis_unit, normalize_model_error
 from services.context_analyzer import analyze_chunked_context, analyze_whole_video_context, choose_analysis_strategy
 from services.continuity_analyzer import analyze_continuity
 from services.video_path import resolve_video_path
@@ -87,7 +87,7 @@ async def reanalyze_continuity(
         report = await analyze_continuity(shots_data)
     except Exception as e:
         app_logger.error(f"整体分析失败: {e}")
-        raise HTTPException(500, f"整体分析失败: {str(e)}")
+        raise HTTPException(500, f"整体分析失败: {normalize_model_error(e)}")
 
     # 保存结果
     existing = db.query(VideoAnalysis).filter(VideoAnalysis.video_id == video_id).first()
@@ -130,9 +130,9 @@ async def detect_shots_endpoint(
     except Exception as e:
         app_logger.error(f"镜头检测失败: video_id={video_id} | 错误: {e}")
         video.status = "error"
-        video.error_msg = str(e)
+        video.error_msg = normalize_model_error(e)
         db.commit()
-        raise HTTPException(500, f"镜头检测失败: {e}")
+        raise HTTPException(500, f"镜头检测失败: {normalize_model_error(e)}")
 
     # 重新检测会生成新的镜头边界；旧的单镜头分析和整体分析不再适用。
     db.query(Shot).filter(Shot.video_id == video_id).delete()
@@ -400,9 +400,9 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                     db.commit()
                 clip_results = extract_shot_clips(source_video_path, boundaries, video_id)
             except Exception as e:
-                update_task(task_id, "error", msg=str(e))
+                update_task(task_id, "error", msg=normalize_model_error(e))
                 video.status = "error"
-                video.error_msg = f"切片失败: {e}"
+                video.error_msg = f"切片失败: {normalize_model_error(e)}"
                 db.commit()
                 return
 
@@ -465,7 +465,8 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                 shot.analysis = result
                 app_logger.info(f"[分析成功] 镜头 {shot.index} 回退分析成功")
             except Exception as e:
-                shot.analysis = {"error": str(e), "analysis_source": "shot_clip", "analysis_mode": "shot_clip"}
+                safe_error = normalize_model_error(e)
+                shot.analysis = {"error": safe_error, "analysis_source": "shot_clip", "analysis_mode": "shot_clip"}
                 app_logger.error(f"[分析失败] 镜头 {shot.index} 分析失败: {e}")
 
             try:
@@ -522,7 +523,7 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
                 if not existing:
                     existing = VideoAnalysis(video_id=video_id)
                     db.add(existing)
-                existing.continuity_report = {"error": f"整体分析失败: {e}"}
+                existing.continuity_report = {"error": f"整体分析失败: {normalize_model_error(e)}"}
                 db.commit()
                 return
 
@@ -633,11 +634,12 @@ async def _run_analysis(video_id: int, task_id: str, user_id: Optional[int] = No
 
     except Exception as e:
         app_logger.error(f"分析任务失败: video_id={video_id}, task_id={task_id} | 错误: {e}", exc_info=True)
-        update_task(task_id, "error", msg=str(e))
+        safe_error = normalize_model_error(e)
+        update_task(task_id, "error", msg=safe_error)
         video = db.query(Video).filter(Video.id == video_id).first()
         if video:
             video.status = "error"
-            video.error_msg = str(e)
+            video.error_msg = safe_error
             video.current_task_id = None
             db.commit()
     finally:

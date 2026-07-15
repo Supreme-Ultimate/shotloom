@@ -1,4 +1,5 @@
 import { ContinuityReport as CReport } from '../types/analysis'
+import { getUserFacingErrorMessage } from '../utils/error'
 
 interface Props {
   report: CReport | null | undefined
@@ -52,7 +53,7 @@ export default function ContinuityReport({ report, loading = false }: Props) {
   if (report.error) {
     return (
       <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-sm text-red-300">
-        整体分析出错：{report.error}
+        整体分析出错：{getUserFacingErrorMessage(report.error, '整体分析失败')}
       </div>
     )
   }

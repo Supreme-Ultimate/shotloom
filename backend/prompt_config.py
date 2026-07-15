@@ -1,5 +1,6 @@
 """Load configurable analysis prompts and JSON field schemas."""
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 from config import PROMPT_CONFIG_PATH
 
 DEFAULT_PROMPT_CONFIG = Path(__file__).parent / "prompt_configs" / "default.json"
+CONTINUITY_SUMMARY_MAX_CHARS = int(os.getenv("CONTINUITY_SUMMARY_MAX_CHARS", "22000"))
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -89,6 +91,81 @@ def _get_nested(data: dict[str, Any], path: str) -> Any:
     return current
 
 
+def _clip_text(value: Any, limit: int) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\n", " ").replace("\r", " ").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
+def _compact_continuity_summary(shots_data: list[dict[str, Any]], fields: list[str], max_chars: int) -> str:
+    labels = {
+        "shot_scale": "景",
+        "camera_movement": "运",
+        "emotional_function": "情",
+        "rhythm_contribution": "节",
+        "narrative_decision": "叙",
+        "what": "事",
+        "why": "因",
+        "audio.sound_type": "声",
+        "audiovisual_sync": "声画",
+    }
+    preferred_fields = [
+        "shot_scale",
+        "camera_movement",
+        "emotional_function",
+        "rhythm_contribution",
+        "narrative_decision",
+        "what",
+        "why",
+        "audio.sound_type",
+        "audiovisual_sync",
+    ]
+    ordered_fields = [field for field in preferred_fields if field in fields] or fields
+
+    def render(field_limit: int, selected_fields: list[str]) -> str:
+        lines = [
+            "压缩镜头摘要：每行格式为 #镜头号 时长 字段=极简摘要；已覆盖所有镜头，用于整体连贯性、节奏和叙事结构分析。"
+        ]
+        for i, shot in enumerate(shots_data):
+            analysis = shot.get("analysis") or {}
+            line_parts = [f"#{i + 1:03d}", f"{float(shot.get('duration') or 0):.1f}s"]
+            for field in selected_fields:
+                value = _clip_text(_get_nested(analysis, field), field_limit)
+                if value:
+                    line_parts.append(f"{labels.get(field, field)}={value}")
+            lines.append(" ".join(line_parts))
+        return "\n".join(lines)
+
+    for field_limit in (24, 16, 10, 6):
+        summary = render(field_limit, ordered_fields)
+        if len(summary) <= max_chars:
+            return summary
+
+    essential_fields = [field for field in ordered_fields if field in {
+        "shot_scale",
+        "camera_movement",
+        "emotional_function",
+        "rhythm_contribution",
+        "narrative_decision",
+    }]
+    summary = render(6, essential_fields or ordered_fields[:4])
+    if len(summary) <= max_chars:
+        return summary
+
+    # Last-resort compression still preserves every shot index and duration.
+    lines = ["超压缩镜头摘要：输入较长，仅保留所有镜头的时长、景别、运镜和情绪关键词。"]
+    for i, shot in enumerate(shots_data):
+        analysis = shot.get("analysis") or {}
+        scale = _clip_text(_get_nested(analysis, "shot_scale"), 4)
+        move = _clip_text(_get_nested(analysis, "camera_movement"), 4)
+        emotion = _clip_text(_get_nested(analysis, "emotional_function"), 4)
+        lines.append(f"#{i + 1:03d} {float(shot.get('duration') or 0):.1f}s {scale}/{move}/{emotion}")
+    return "\n".join(lines)[:max_chars]
+
+
 def build_continuity_summary(shots_data: list[dict[str, Any]]) -> str:
     config = load_prompt_config()
     fields = config.get("continuity_summary_fields") or []
@@ -103,7 +180,10 @@ def build_continuity_summary(shots_data: list[dict[str, Any]]) -> str:
             output_key = field.replace(".", "_")
             item[output_key] = _get_nested(analysis, field)
         summaries.append(item)
-    return json.dumps(summaries, ensure_ascii=False, indent=2)
+    summary = json.dumps(summaries, ensure_ascii=False, indent=2)
+    if len(summary) <= CONTINUITY_SUMMARY_MAX_CHARS:
+        return summary
+    return _compact_continuity_summary(shots_data, fields, CONTINUITY_SUMMARY_MAX_CHARS)
 
 
 def build_continuity_prompt(shots_summary: str) -> str:

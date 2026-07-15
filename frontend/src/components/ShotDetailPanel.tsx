@@ -1,5 +1,6 @@
 import { Shot } from '../types/analysis'
 import { API_BASE_URL } from '../config'
+import { getUserFacingErrorMessage } from '../utils/error'
 
 interface Props {
   shot: Shot | null
@@ -95,7 +96,7 @@ export default function ShotDetailPanel({ shot, videoId }: Props) {
 
       {hasError && (
         <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-sm text-red-300">
-          分析出错：{a?.error}
+          分析出错：{getUserFacingErrorMessage(a?.error, '分析失败')}
         </div>
       )}
 

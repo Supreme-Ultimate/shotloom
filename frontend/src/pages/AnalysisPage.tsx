@@ -9,7 +9,7 @@ import ShotTimeline from '../components/ShotTimeline'
 import ContinuityReport from '../components/ContinuityReport'
 import SegmentReport from '../components/SegmentReport'
 import { useSSEProgress } from '../hooks/useSSEProgress'
-import { getApiErrorData, getApiErrorMessage, getApiErrorStatus, isCreditOrQuotaError } from '../utils/error'
+import { getApiErrorData, getApiErrorMessage, getApiErrorStatus, getUserFacingErrorMessage, isAppCreditError, isProviderQuotaError } from '../utils/error'
 
 interface Props {
   videoId: number
@@ -60,7 +60,7 @@ function ProgressBar({
     analyzing: isIndeterminate ? `${analyzingLabel} · 已进行 ${formatElapsed(elapsed)}` : analyzingLabel,
     continuity: `生成整体分析… · 已进行 ${formatElapsed(elapsed)}`,
     completed: '分析完成',
-    error: `错误：${progress.msg}`,
+    error: `错误：${getUserFacingErrorMessage(progress.msg, '分析失败')}`,
     cancelled: progress.msg ?? '分析已中断',
   }
   const pct = progress.total
@@ -280,6 +280,7 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
   const handleAnalyzeSelected = async (indices: number[]) => {
     const selected = shots.filter((shot) => indices.includes(shot.index))
     const alreadyAnalyzed = selected.filter((shot) => shot.analysis && !shot.analysis.error)
+    const previousStatus = data?.video.status ?? 'detected'
     if (alreadyAnalyzed.length > 0) {
       const confirmed = window.confirm(
         `选中的镜头中有 ${alreadyAnalyzed.length} 个已经正常分析过。继续会覆盖这些镜头的分析结果，确定继续吗？`
@@ -301,11 +302,12 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
     } catch (err: unknown) {
       const errorMessage = getApiErrorMessage(err, '分析失败')
       const status = getApiErrorStatus(err)
+      const canRetryLater = isAppCreditError(err) || isProviderQuotaError(err)
       console.error('分析失败:', status, getApiErrorData(err), errorMessage)
-      message.error(errorMessage, isCreditOrQuotaError(err) ? 6 : 4)
+      message.error(errorMessage, canRetryLater ? 6 : 4)
       setIsAnalyzingSelected(false)
       setAnalyzingShots(new Set()) // 出错时清空分析中状态
-      setData((prev) => prev ? updateAnalysisState(prev, isCreditOrQuotaError(err) ? prev.video.status : 'error', prev.shots) : prev)
+      setData((prev) => prev ? updateAnalysisState(prev, canRetryLater ? previousStatus : 'error', prev.shots) : prev)
     }
   }
 
@@ -342,7 +344,9 @@ export default function AnalysisPage({ videoId, onBack }: Props) {
       } : prev)
       await loadData() // 重新加载数据
     } catch (err: unknown) {
-      console.error('整体分析失败:', getApiErrorStatus(err), getApiErrorData(err), getApiErrorMessage(err, '整体分析失败'))
+      const errorMessage = getApiErrorMessage(err, '整体分析失败')
+      console.error('整体分析失败:', getApiErrorStatus(err), getApiErrorData(err), errorMessage)
+      message.error(errorMessage, isProviderQuotaError(err) ? 6 : 4)
     } finally {
       setIsReanalyzingContinuity(false)
       setContinuityLoading(false)

@@ -39,6 +39,47 @@ _openai_client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=DASHSCOPE_BASE_URL) 
 
 _semaphore = asyncio.Semaphore(AI_CONCURRENCY)
 
+MODEL_PROVIDER_BUSY_MESSAGE = "模型服务当前负载过高，请稍后手动重试。"
+_MODEL_PROVIDER_QUOTA_MARKERS = (
+    "insufficient_quota",
+    "current quota",
+    "token-limit",
+    "you exceeded your current quota",
+)
+_MODEL_PROVIDER_BUSY_MARKERS = _MODEL_PROVIDER_QUOTA_MARKERS + (
+    "rate limit",
+    "rate_limit",
+    "rate_limit_exceeded",
+    "too many requests",
+    "ssleoferror",
+    "eof occurred in violation of protocol",
+    "httpsconnectionpool",
+    "max retries exceeded",
+    "connection reset",
+    "connection aborted",
+    "timeout",
+    "temporarily unavailable",
+    "service unavailable",
+)
+
+
+def is_model_provider_quota_error(error: Exception | str) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in _MODEL_PROVIDER_QUOTA_MARKERS)
+
+
+def is_model_provider_busy_error(error: Exception | str) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in _MODEL_PROVIDER_BUSY_MARKERS)
+
+
+def normalize_model_error(error: Exception | str) -> str:
+    """Return a user-safe model error while keeping raw details in server logs."""
+    if is_model_provider_busy_error(error):
+        return MODEL_PROVIDER_BUSY_MESSAGE
+    message = str(error).strip()
+    return message or "模型分析失败，请稍后重试。"
+
 
 def _extract_json(text: str) -> dict:
     """从模型输出中提取 JSON，兼容带代码块的情况"""
@@ -148,6 +189,8 @@ def build_merged_analysis_unit(
 
 
 def _is_transient_model_error(exc: Exception) -> bool:
+    if is_model_provider_quota_error(exc):
+        return False
     message = str(exc).lower()
     transient_markers = (
         "receive batching backend response failed",

@@ -808,7 +808,37 @@ class TestAiAnalyzerClipBounds:
         from services.ai_analyzer import _is_transient_model_error
 
         assert _is_transient_model_error(Exception("Receive batching backend response failed!"))
+        assert _is_transient_model_error(Exception("rate limit exceeded"))
         assert not _is_transient_model_error(Exception("The video file is too short."))
+
+    def test_provider_quota_errors_are_normalized_for_users(self):
+        from services.ai_analyzer import (
+            MODEL_PROVIDER_BUSY_MESSAGE,
+            normalize_model_error,
+        )
+
+        raw = (
+            "Error code: 429 - {'error': {'message': 'You exceeded your current quota, "
+            "please check your plan and billing details. For details, see: "
+            "https://www.alibabacloud.com/help/en/model-studio/error-code#token-limit', "
+            "'type': 'insufficient_quota', 'code': 'insufficient_quota'}}"
+        )
+
+        assert normalize_model_error(Exception(raw)) == MODEL_PROVIDER_BUSY_MESSAGE
+
+    def test_transient_ssl_errors_are_normalized_for_users(self):
+        from services.ai_analyzer import (
+            MODEL_PROVIDER_BUSY_MESSAGE,
+            normalize_model_error,
+        )
+
+        raw = (
+            "HTTPSConnectionPool(host='dashscope.aliyuncs.com', port=443): Max retries exceeded "
+            "with url: /api/v1/services/aigc/text-generation/generation "
+            "(Caused by SSLError(SSLEOFError(8, 'EOF occurred in violation of protocol (_ssl.c:2426)')))"
+        )
+
+        assert normalize_model_error(Exception(raw)) == MODEL_PROVIDER_BUSY_MESSAGE
 
 
 class TestAnalysisWorkerGuards:
@@ -1320,6 +1350,95 @@ class TestContextAnalysisWorker:
         assert db_snapshots == [["A", "B", None]]
         assert (1, 2, "分块上下文分析 1/2：已写入 2 个镜头") in updates
         assert (2, 2, "分块上下文分析 2/2：已写入 1 个镜头") in updates
+
+
+class TestContinuityAnalyzer:
+    def test_large_continuity_summary_is_compacted_under_provider_limit(self):
+        from prompt_config import build_continuity_prompt, build_continuity_summary
+
+        shots_data = [
+            {
+                "index": i,
+                "duration": 1.2,
+                "analysis": {
+                    "shot_scale": "超长景别描述" * 20,
+                    "camera_movement": "复杂运镜描述" * 20,
+                    "emotional_function": "情绪功能描述" * 20,
+                    "rhythm_contribution": "节奏贡献描述" * 20,
+                    "narrative_decision": "叙事决策描述" * 20,
+                    "what": "这个镜头拍了大量细节" * 20,
+                    "why": "这个镜头为了推动整体叙事" * 20,
+                    "audio": {"sound_type": "对白音乐环境声" * 20},
+                    "audiovisual_sync": "声画关系描述" * 20,
+                },
+            }
+            for i in range(300)
+        ]
+
+        summary = build_continuity_summary(shots_data)
+        prompt = build_continuity_prompt(summary)
+
+        assert len(prompt) < 30000
+        assert "#001" in summary
+        assert "#300" in summary
+
+    def test_continuity_uses_openai_compatible_client(self, monkeypatch):
+        import asyncio
+        import services.continuity_analyzer as continuity
+
+        captured = {}
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return type("Response", (), {
+                    "choices": [
+                        type("Choice", (), {
+                            "message": type("Message", (), {"content": '{"raw":"ok"}'})()
+                        })()
+                    ]
+                })()
+
+        monkeypatch.setattr(
+            continuity,
+            "_openai_client",
+            type("Client", (), {
+                "chat": type("Chat", (), {
+                    "completions": FakeCompletions()
+                })()
+            })(),
+        )
+
+        result = asyncio.run(continuity.analyze_continuity([
+            {"index": 0, "duration": 1.0, "analysis": {"content_description": "a"}}
+        ]))
+
+        assert result == {"raw": "ok"}
+        assert captured["model"] == continuity.CONTINUITY_MODEL_NAME
+        assert captured["messages"][0]["role"] == "user"
+
+    def test_continuity_empty_provider_response_has_friendly_error(self, monkeypatch):
+        import asyncio
+        import services.continuity_analyzer as continuity
+
+        class FakeCompletions:
+            def create(self, **_kwargs):
+                return type("Response", (), {"choices": None})()
+
+        monkeypatch.setattr(
+            continuity,
+            "_openai_client",
+            type("Client", (), {
+                "chat": type("Chat", (), {
+                    "completions": FakeCompletions()
+                })()
+            })(),
+        )
+
+        with pytest.raises(ValueError, match="模型服务未返回有效内容"):
+            asyncio.run(continuity.analyze_continuity([
+                {"index": 0, "duration": 1.0, "analysis": {"content_description": "a"}}
+            ]))
 
 
 class TestExportCompleteness:
