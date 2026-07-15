@@ -32,6 +32,7 @@ class CosStorage:
         self._expires_at = 0
         self._origin_client = None
         self._upload_client = None
+        self._security_token = None
 
     def _metadata_credentials(self) -> dict:
         url = (
@@ -66,6 +67,7 @@ class CosStorage:
             if COS_ACCELERATE:
                 upload_config["Endpoint"] = "cos.accelerate.myqcloud.com"
             self._upload_client = CosS3Client(CosConfig(**upload_config))
+            self._security_token = credentials["Token"]
             self._expires_at = int(credentials.get("ExpiredTime") or (time.time() + 3600))
             return self._origin_client, self._upload_client
 
@@ -85,7 +87,11 @@ class CosStorage:
             Key=object_key,
             Method="PUT",
             Expired=COS_SIGNED_URL_EXPIRE_SECONDS,
-            Params={"partNumber": str(part_number), "uploadId": upload_id},
+            Params={
+                "partNumber": str(part_number),
+                "uploadId": upload_id,
+                "x-cos-security-token": self._security_token,
+            },
         )
 
     def complete_multipart_upload(self, object_key: str, upload_id: str, parts: list[dict]):

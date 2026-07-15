@@ -519,6 +519,35 @@ class TestUpload:
         assert len(aborted) == 1
         assert aborted[0][1] == "cos-upload-abort"
 
+    def test_role_security_token_is_embedded_in_signed_part_url(self, monkeypatch):
+        from services.cos_storage import CosStorage
+
+        captured = {}
+
+        class FakeConfig:
+            _token = "temporary-role-token"
+
+        class FakeUploadClient:
+            _conf = FakeConfig()
+
+            def get_presigned_url(self, **kwargs):
+                captured.update(kwargs)
+                return "https://cos.example/signed"
+
+        storage = object.__new__(CosStorage)
+        storage.bucket = "bucket-appid"
+        storage._security_token = "temporary-role-token"
+        storage._clients = lambda: (object(), FakeUploadClient())
+
+        url = storage.sign_upload_part("video.mp4", "upload-id", 3)
+
+        assert url == "https://cos.example/signed"
+        assert captured["Params"] == {
+            "partNumber": "3",
+            "uploadId": "upload-id",
+            "x-cos-security-token": "temporary-role-token",
+        }
+
 
 class TestVideoList:
     @classmethod
