@@ -134,6 +134,12 @@ MAX_VIDEO_DURATION_SECONDS=3600
 VITE_MAX_UPLOAD_SIZE_MB=1024
 VITE_MAX_VIDEO_DURATION_SECONDS=3600
 NGINX_CLIENT_MAX_BODY_SIZE=1024m
+COS_UPLOAD_ENABLED=false
+COS_BUCKET=your-bucket-appid
+COS_REGION=ap-singapore
+COS_ROLE_NAME=your-cvm-role
+COS_ACCELERATE=true
+COS_PART_SIZE_MB=16
 INITIAL_CREDITS=100
 FRONTEND_URL=http://localhost:5173
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
@@ -327,7 +333,8 @@ scripts/smoke_docker.sh
 - 使用 HTTPS 反向代理后设置 `COOKIE_SECURE=true`。
 - 将 `FRONTEND_URL` / `CORS_ORIGINS` 改为你的真实域名。
 - 不要使用模板里的 `SECRET_KEY` 和 `POSTGRES_PASSWORD`。
-- 大文件上传限制同时受后端 `MAX_UPLOAD_SIZE_MB`、前端 `VITE_MAX_UPLOAD_SIZE_MB` 和 Nginx `client_max_body_size` / `NGINX_CLIENT_MAX_BODY_SIZE` 影响；三者建议保持一致。
+- 启用 `COS_UPLOAD_ENABLED=true` 后，浏览器使用 16 MB 分片、4 路并发直接上传 COS，再由同地域服务器落盘处理，因此不经过 Cloudflare 的 100 MB 请求体限制。COS Bucket 跨域规则需允许站点域名执行 `PUT`，并暴露 `ETag` 响应头。
+- 未启用 COS 时，旧上传接口的大小限制同时受后端 `MAX_UPLOAD_SIZE_MB`、前端 `VITE_MAX_UPLOAD_SIZE_MB` 和 Nginx `client_max_body_size` / `NGINX_CLIENT_MAX_BODY_SIZE` 影响。
 - 单个视频时长默认限制为 3600 秒（1 小时）；可通过后端 `MAX_VIDEO_DURATION_SECONDS` 和前端 `VITE_MAX_VIDEO_DURATION_SECONDS` 同步调整。
 
 ## 手动开发

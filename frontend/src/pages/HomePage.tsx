@@ -9,6 +9,7 @@ import { API_BASE_URL, SHOTLOOM_LOGO_URL } from '../config'
 import { APP_VERSION } from '../config/version'
 import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
 import { getUploadSizeError, UPLOAD_HELP_TEXT } from '../utils/uploadLimits'
+import { uploadVideoMultipart } from '../utils/cosMultipartUpload'
 
 interface Video {
   id: number
@@ -67,17 +68,10 @@ export default function HomePage() {
 
     setUploading(true)
     setUploadProgress(0)
-    const form = new FormData()
-    form.append('file', file)
-
     try {
-      const res = await api.post('/api/upload', form, {
-        onUploadProgress: (e) => {
-          if (e.total) setUploadProgress(Math.round((e.loaded / e.total) * 100))
-        },
-      })
+      const video = await uploadVideoMultipart(file, setUploadProgress)
       message.success('上传成功')
-      navigate(`/analysis/${res.data.video_id}`)
+      navigate(`/analysis/${video.video_id}`)
     } catch (err: unknown) {
       console.error('上传失败:', getApiErrorStatus(err), getApiErrorData(err))
       message.error(getApiErrorMessage(err, '上传失败'))

@@ -71,7 +71,27 @@ class Video(Base):
     status = Column(String, default="uploaded")  # uploaded | detecting | detected | analyzing | completed | error
     current_task_id = Column(String, nullable=True)  # 当前正在运行的任务 ID
     error_msg = Column(Text, nullable=True)
+    storage_provider = Column(String, nullable=True)
+    storage_key = Column(String, nullable=True)
     created_at = Column(DateTime, default=utcnow)
+
+
+class CosUploadSession(Base):
+    __tablename__ = "cos_upload_sessions"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=True)
+    file_size = Column(Integer, nullable=False)
+    part_size = Column(Integer, nullable=False)
+    part_count = Column(Integer, nullable=False)
+    object_key = Column(String, nullable=False, unique=True)
+    cos_upload_id = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="initiated")
+    video_id = Column(Integer, ForeignKey("videos.id"), nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 # ─── 镜头表 ─────────────────────────────────────────────────────────────────────

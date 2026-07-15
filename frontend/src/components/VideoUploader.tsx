@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react'
-import api from '../utils/api'
 import { getApiErrorData, getApiErrorMessage, getApiErrorStatus } from '../utils/error'
 import BrandMark from './BrandMark'
 import { SHOTLOOM_LOGO_URL } from '../config'
 import { getUploadSizeError, UPLOAD_HELP_TEXT } from '../utils/uploadLimits'
+import { uploadVideoMultipart } from '../utils/cosMultipartUpload'
 
 interface Props {
   onUploadComplete: (videoId: number) => void
@@ -25,15 +25,9 @@ export default function VideoUploader({ onUploadComplete }: Props) {
 
     setUploading(true)
     setProgress(0)
-    const form = new FormData()
-    form.append('file', file)
     try {
-      const res = await api.post('/api/upload', form, {
-        onUploadProgress: (e) => {
-          if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
-        },
-      })
-      onUploadComplete(res.data.video_id)
+      const video = await uploadVideoMultipart(file, setProgress)
+      onUploadComplete(video.video_id)
     } catch (e: unknown) {
       console.error('上传失败:', getApiErrorStatus(e), getApiErrorData(e))
       setError(getApiErrorMessage(e, '上传失败'))

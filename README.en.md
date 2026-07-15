@@ -134,6 +134,12 @@ MAX_VIDEO_DURATION_SECONDS=3600
 VITE_MAX_UPLOAD_SIZE_MB=1024
 VITE_MAX_VIDEO_DURATION_SECONDS=3600
 NGINX_CLIENT_MAX_BODY_SIZE=1024m
+COS_UPLOAD_ENABLED=false
+COS_BUCKET=your-bucket-appid
+COS_REGION=ap-singapore
+COS_ROLE_NAME=your-cvm-role
+COS_ACCELERATE=true
+COS_PART_SIZE_MB=16
 INITIAL_CREDITS=100
 FRONTEND_URL=http://localhost:5173
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
@@ -328,7 +334,8 @@ Production notes:
 - Set `COOKIE_SECURE=true` behind HTTPS.
 - Set `FRONTEND_URL` / `CORS_ORIGINS` to your real domain.
 - Never use the template `SECRET_KEY` or `POSTGRES_PASSWORD`.
-- Upload limits are controlled by backend `MAX_UPLOAD_SIZE_MB`, frontend `VITE_MAX_UPLOAD_SIZE_MB`, and Nginx `client_max_body_size` / `NGINX_CLIENT_MAX_BODY_SIZE`; keep all three aligned.
+- With `COS_UPLOAD_ENABLED=true`, the browser uploads 16 MB parts to COS with four concurrent requests and the same-region server materializes the object, bypassing Cloudflare's 100 MB request-body limit. The bucket CORS rule must allow `PUT` from the site origin and expose the `ETag` response header.
+- Without COS, upload limits are controlled by backend `MAX_UPLOAD_SIZE_MB`, frontend `VITE_MAX_UPLOAD_SIZE_MB`, and Nginx `client_max_body_size` / `NGINX_CLIENT_MAX_BODY_SIZE`.
 - Single-video duration defaults to 3600 seconds (1 hour); keep backend `MAX_VIDEO_DURATION_SECONDS` and frontend `VITE_MAX_VIDEO_DURATION_SECONDS` aligned if you change it.
 
 ## Manual Development

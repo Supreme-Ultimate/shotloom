@@ -22,3 +22,4 @@ psycopg2-binary>=2.9.9
 redis>=5.0.0
 rq>=1.16.0
 alembic>=1.13.0
+cos-python-sdk-v5>=1.9.44

@@ -1,17 +1,247 @@
 import av
+import math
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from database import get_db, Video, User, Shot, CreditTransaction, AnalysisTask, AnalysisTaskSnapshot, VideoAnalysisConfig, VideoTranscript
-from config import MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB, MAX_VIDEO_DURATION_SECONDS, UPLOADS_DIR, SHOTS_DIR, THUMBNAILS_DIR
+from database import get_db, Video, User, Shot, CreditTransaction, AnalysisTask, AnalysisTaskSnapshot, VideoAnalysisConfig, VideoTranscript, CosUploadSession
+from config import COS_PART_SIZE_MB, COS_UPLOAD_ENABLED, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB, MAX_VIDEO_DURATION_SECONDS, UPLOADS_DIR, SHOTS_DIR, THUMBNAILS_DIR
 from auth import get_current_user
 from logger import app_logger
 from permissions import get_video_for_user
+from services.cos_storage import CosStorage
 
 router = APIRouter(prefix="/api", tags=["upload"])
+cos_storage = CosStorage() if COS_UPLOAD_ENABLED else None
+
+
+class CosUploadInitRequest(BaseModel):
+    filename: str
+    file_size: int
+    content_type: str = "application/octet-stream"
+
+
+class CosUploadPart(BaseModel):
+    part_number: int
+    etag: str
+
+
+class CosUploadCompleteRequest(BaseModel):
+    parts: list[CosUploadPart]
+
+
+class CosPartSignRequest(BaseModel):
+    part_numbers: list[int]
+
+
+def _video_upload_response(video: Video) -> dict:
+    return {
+        "video_id": video.id,
+        "filename": video.filename,
+        "duration": video.duration,
+        "fps": video.fps,
+        "width": video.width,
+        "height": video.height,
+    }
+
+
+@router.post("/uploads/cos/init")
+def init_cos_upload(
+    body: CosUploadInitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not COS_UPLOAD_ENABLED or cos_storage is None:
+        raise HTTPException(503, "COS 分片上传未启用")
+
+    original_filename = Path(body.filename or "upload").name
+    suffix = Path(original_filename).suffix.lower()
+    allowed = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm"}
+    if suffix not in allowed:
+        raise HTTPException(400, f"不支持的格式 {suffix}，支持：{', '.join(allowed)}")
+    if body.file_size <= 0 or body.file_size > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(413, f"文件过大，最大支持 {MAX_UPLOAD_SIZE_MB} MB")
+
+    session_id = uuid.uuid4().hex
+    part_size = COS_PART_SIZE_MB * 1024 * 1024
+    part_count = math.ceil(body.file_size / part_size)
+    object_key = f"shotloom/users/{current_user.id}/{session_id}{suffix}"
+    upload_id = cos_storage.create_multipart_upload(object_key, body.content_type)
+    try:
+        signed_parts = [
+            {
+                "part_number": part_number,
+                "url": cos_storage.sign_upload_part(object_key, upload_id, part_number),
+            }
+            for part_number in range(1, part_count + 1)
+        ]
+    except Exception:
+        cos_storage.abort_multipart_upload(object_key, upload_id)
+        raise
+    session = CosUploadSession(
+        id=session_id,
+        user_id=current_user.id,
+        filename=original_filename,
+        content_type=body.content_type,
+        file_size=body.file_size,
+        part_size=part_size,
+        part_count=part_count,
+        object_key=object_key,
+        cos_upload_id=upload_id,
+        status="initiated",
+    )
+    db.add(session)
+    db.commit()
+
+    return {
+        "upload_mode": "cos_multipart",
+        "session_id": session_id,
+        "part_size": part_size,
+        "part_count": part_count,
+        "parts": signed_parts,
+    }
+
+
+@router.post("/uploads/cos/{session_id}/complete")
+def complete_cos_upload(
+    session_id: str,
+    body: CosUploadCompleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not COS_UPLOAD_ENABLED or cos_storage is None:
+        raise HTTPException(503, "COS 分片上传未启用")
+
+    session = db.query(CosUploadSession).filter(
+        CosUploadSession.id == session_id,
+        CosUploadSession.user_id == current_user.id,
+    ).first()
+    if not session:
+        raise HTTPException(404, "上传会话不存在")
+    if session.status == "completed" and session.video_id:
+        video = db.query(Video).filter(Video.id == session.video_id).first()
+        if video:
+            return _video_upload_response(video)
+
+    parts = sorted(body.parts, key=lambda item: item.part_number)
+    expected_numbers = list(range(1, session.part_count + 1))
+    if [item.part_number for item in parts] != expected_numbers or any(not item.etag for item in parts):
+        raise HTTPException(400, "上传分片不完整")
+
+    if session.status == "initiated":
+        cos_storage.complete_multipart_upload(
+            session.object_key,
+            session.cos_upload_id,
+            [{"PartNumber": item.part_number, "ETag": item.etag} for item in parts],
+        )
+        session.status = "materializing"
+        db.commit()
+    elif session.status not in {"materializing", "error"}:
+        raise HTTPException(409, "上传会话当前状态不可完成")
+
+    suffix = Path(session.filename).suffix.lower()
+    save_path = UPLOADS_DIR / f"{session.id}{suffix}"
+    temp_path = save_path.with_suffix(f"{save_path.suffix}.download")
+    try:
+        cos_storage.download_file(session.object_key, temp_path)
+        temp_path.replace(save_path)
+        meta = get_video_meta(str(save_path))
+        duration = float(meta.get("duration") or 0)
+        if MAX_VIDEO_DURATION_SECONDS > 0 and duration > MAX_VIDEO_DURATION_SECONDS:
+            save_path.unlink(missing_ok=True)
+            cos_storage.delete_object(session.object_key)
+            session.status = "rejected"
+            db.commit()
+            max_minutes = MAX_VIDEO_DURATION_SECONDS / 60
+            raise HTTPException(413, f"视频时长过长，最大支持 {max_minutes:.0f} 分钟")
+
+        video = Video(
+            filename=session.filename,
+            filepath=str(save_path),
+            duration=duration,
+            fps=meta["fps"],
+            width=meta["width"],
+            height=meta["height"],
+            status="uploaded",
+            user_id=current_user.id,
+            storage_provider="cos",
+            storage_key=session.object_key,
+        )
+        db.add(video)
+        db.flush()
+        session.status = "completed"
+        session.video_id = video.id
+        db.commit()
+        db.refresh(video)
+        app_logger.info(f"COS 视频入库完成: video_id={video.id}, user_id={current_user.id}")
+        return _video_upload_response(video)
+    except HTTPException:
+        raise
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        session.status = "error"
+        db.commit()
+        raise
+
+
+@router.post("/uploads/cos/{session_id}/parts/sign")
+def sign_cos_upload_parts(
+    session_id: str,
+    body: CosPartSignRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not COS_UPLOAD_ENABLED or cos_storage is None:
+        raise HTTPException(503, "COS 分片上传未启用")
+    session = db.query(CosUploadSession).filter(
+        CosUploadSession.id == session_id,
+        CosUploadSession.user_id == current_user.id,
+    ).first()
+    if not session or session.status != "initiated":
+        raise HTTPException(404, "上传会话不存在")
+
+    part_numbers = sorted(set(body.part_numbers))
+    if not part_numbers or len(part_numbers) > 100:
+        raise HTTPException(400, "每次需签名 1 到 100 个分片")
+    if part_numbers[0] < 1 or part_numbers[-1] > session.part_count:
+        raise HTTPException(400, "分片编号超出范围")
+    return {
+        "parts": [
+            {
+                "part_number": part_number,
+                "url": cos_storage.sign_upload_part(
+                    session.object_key,
+                    session.cos_upload_id,
+                    part_number,
+                ),
+            }
+            for part_number in part_numbers
+        ],
+    }
+
+
+@router.delete("/uploads/cos/{session_id}")
+def abort_cos_upload(
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not COS_UPLOAD_ENABLED or cos_storage is None:
+        raise HTTPException(503, "COS 分片上传未启用")
+    session = db.query(CosUploadSession).filter(
+        CosUploadSession.id == session_id,
+        CosUploadSession.user_id == current_user.id,
+    ).first()
+    if not session or session.status != "initiated":
+        raise HTTPException(404, "上传会话不存在")
+
+    cos_storage.abort_multipart_upload(session.object_key, session.cos_upload_id)
+    session.status = "aborted"
+    db.commit()
+    return {"status": "aborted"}
 
 
 def get_video_meta(filepath: str) -> dict:
@@ -170,6 +400,7 @@ def delete_video(
     db.query(CreditTransaction).filter(CreditTransaction.video_id == video_id).delete()
     db.query(VideoAnalysisConfig).filter(VideoAnalysisConfig.video_id == video_id).delete()
     db.query(VideoTranscript).filter(VideoTranscript.video_id == video_id).delete()
+    db.query(CosUploadSession).filter(CosUploadSession.video_id == video_id).delete()
     task_ids = [row[0] for row in db.query(AnalysisTask.id).filter(AnalysisTask.video_id == video_id).all()]
     if task_ids:
         db.query(AnalysisTaskSnapshot).filter(AnalysisTaskSnapshot.task_id.in_(task_ids)).delete(synchronize_session=False)
@@ -177,6 +408,9 @@ def delete_video(
 
     # 删除文件系统中的产物
     try:
+        if video.storage_provider == "cos" and video.storage_key and cos_storage is not None:
+            cos_storage.delete_object(video.storage_key)
+
         # 删除原视频
         video_path = Path(video.filepath)
         if video_path.exists():

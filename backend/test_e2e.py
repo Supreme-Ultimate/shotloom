@@ -9,6 +9,7 @@
 import io
 import pytest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -355,6 +356,168 @@ class TestUpload:
 
         assert r.status_code == 413
         assert "视频时长过长" in r.json()["detail"]
+
+    def test_authenticated_user_can_start_cos_multipart_upload(self, monkeypatch):
+        import routers.upload as upload_router
+
+        class FakeCosStorage:
+            def create_multipart_upload(self, object_key, content_type):
+                return "cos-upload-1"
+
+            def sign_upload_part(self, object_key, upload_id, part_number):
+                return f"https://cos.example/{object_key}?uploadId={upload_id}&partNumber={part_number}"
+
+        monkeypatch.setattr(upload_router, "COS_UPLOAD_ENABLED", True, raising=False)
+        monkeypatch.setattr(upload_router, "cos_storage", FakeCosStorage(), raising=False)
+
+        r = client.post(
+            "/api/uploads/cos/init",
+            json={
+                "filename": "large-video.mp4",
+                "file_size": 180 * 1024 * 1024,
+                "content_type": "video/mp4",
+            },
+            headers=auth_headers(self.token),
+        )
+
+        assert r.status_code == 200
+        data = r.json()
+        assert data["upload_mode"] == "cos_multipart"
+        assert data["part_size"] == 16 * 1024 * 1024
+        assert data["part_count"] == 12
+        assert data["session_id"]
+        assert len(data["parts"]) == 12
+        assert data["parts"][0]["part_number"] == 1
+        assert data["parts"][0]["url"].startswith("https://cos.example/")
+
+    def test_user_can_complete_cos_upload_and_get_video(self, monkeypatch, tmp_path):
+        import routers.upload as upload_router
+
+        class FakeCosStorage:
+            def create_multipart_upload(self, object_key, content_type):
+                return "cos-upload-complete"
+
+            def sign_upload_part(self, object_key, upload_id, part_number):
+                return f"https://cos.example/part/{part_number}"
+
+            def complete_multipart_upload(self, object_key, upload_id, parts):
+                return None
+
+            def download_file(self, object_key, destination):
+                Path(destination).write_bytes(b"materialized video")
+
+        monkeypatch.setattr(upload_router, "COS_UPLOAD_ENABLED", True, raising=False)
+        monkeypatch.setattr(upload_router, "COS_PART_SIZE_MB", 16)
+        monkeypatch.setattr(upload_router, "UPLOADS_DIR", tmp_path)
+        monkeypatch.setattr(upload_router, "cos_storage", FakeCosStorage(), raising=False)
+        monkeypatch.setattr(upload_router, "get_video_meta", lambda _path: {
+            "duration": 42.0,
+            "fps": 25.0,
+            "width": 1920,
+            "height": 1080,
+        })
+
+        started = client.post(
+            "/api/uploads/cos/init",
+            json={"filename": "feature.mp4", "file_size": 17 * 1024 * 1024, "content_type": "video/mp4"},
+            headers=auth_headers(self.token),
+        )
+        session_id = started.json()["session_id"]
+
+        completed = client.post(
+            f"/api/uploads/cos/{session_id}/complete",
+            json={
+                "parts": [
+                    {"part_number": 1, "etag": '"etag-1"'},
+                    {"part_number": 2, "etag": '"etag-2"'},
+                ],
+            },
+            headers=auth_headers(self.token),
+        )
+
+        assert completed.status_code == 200
+        data = completed.json()
+        assert data["filename"] == "feature.mp4"
+        assert data["duration"] == 42.0
+        assert client.get(f"/api/videos/{data['video_id']}", headers=auth_headers(self.token)).status_code == 200
+
+    def test_only_session_owner_can_renew_part_urls(self, monkeypatch):
+        import routers.upload as upload_router
+
+        class FakeCosStorage:
+            def create_multipart_upload(self, object_key, content_type):
+                return "cos-upload-owner"
+
+            def sign_upload_part(self, object_key, upload_id, part_number):
+                return f"https://cos.example/renewed/{part_number}"
+
+        monkeypatch.setattr(upload_router, "COS_UPLOAD_ENABLED", True, raising=False)
+        monkeypatch.setattr(upload_router, "cos_storage", FakeCosStorage(), raising=False)
+        started = client.post(
+            "/api/uploads/cos/init",
+            json={"filename": "owner.mp4", "file_size": 20 * 1024 * 1024, "content_type": "video/mp4"},
+            headers=auth_headers(self.token),
+        )
+        session_id = started.json()["session_id"]
+        other_token = register("other-cos-uploader@example.com").json()["access_token"]
+
+        denied = client.post(
+            f"/api/uploads/cos/{session_id}/parts/sign",
+            json={"part_numbers": [1]},
+            headers=auth_headers(other_token),
+        )
+        renewed = client.post(
+            f"/api/uploads/cos/{session_id}/parts/sign",
+            json={"part_numbers": [1, 2]},
+            headers=auth_headers(self.token),
+        )
+
+        assert denied.status_code == 404
+        assert renewed.status_code == 200
+        assert renewed.json()["parts"] == [
+            {"part_number": 1, "url": "https://cos.example/renewed/1"},
+            {"part_number": 2, "url": "https://cos.example/renewed/2"},
+        ]
+
+    def test_owner_can_abort_cos_multipart_upload(self, monkeypatch):
+        import routers.upload as upload_router
+
+        aborted = []
+
+        class FakeCosStorage:
+            def create_multipart_upload(self, object_key, content_type):
+                return "cos-upload-abort"
+
+            def sign_upload_part(self, object_key, upload_id, part_number):
+                return f"https://cos.example/abort/{part_number}"
+
+            def abort_multipart_upload(self, object_key, upload_id):
+                aborted.append((object_key, upload_id))
+
+        monkeypatch.setattr(upload_router, "COS_UPLOAD_ENABLED", True, raising=False)
+        monkeypatch.setattr(upload_router, "cos_storage", FakeCosStorage(), raising=False)
+        started = client.post(
+            "/api/uploads/cos/init",
+            json={"filename": "cancel.mp4", "file_size": 1024, "content_type": "video/mp4"},
+            headers=auth_headers(self.token),
+        )
+        session_id = started.json()["session_id"]
+        other_token = register("other-cos-abort@example.com").json()["access_token"]
+
+        denied = client.delete(
+            f"/api/uploads/cos/{session_id}",
+            headers=auth_headers(other_token),
+        )
+        cancelled = client.delete(
+            f"/api/uploads/cos/{session_id}",
+            headers=auth_headers(self.token),
+        )
+
+        assert denied.status_code == 404
+        assert cancelled.status_code == 200
+        assert cancelled.json() == {"status": "aborted"}
+        assert len(aborted) == 1
+        assert aborted[0][1] == "cos-upload-abort"
 
 
 class TestVideoList:

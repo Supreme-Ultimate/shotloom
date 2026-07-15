@@ -67,6 +67,20 @@ MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "1024"))
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 MAX_VIDEO_DURATION_SECONDS = float(os.getenv("MAX_VIDEO_DURATION_SECONDS", "3600"))
 
+# Tencent COS multipart uploads. Browser parts use the accelerated endpoint while
+# the server keeps using same-region COS APIs through its attached CVM role.
+COS_UPLOAD_ENABLED = os.getenv("COS_UPLOAD_ENABLED", "false").lower() == "true"
+COS_BUCKET = os.getenv("COS_BUCKET", "")
+COS_REGION = os.getenv("COS_REGION", "ap-singapore")
+COS_ROLE_NAME = os.getenv("COS_ROLE_NAME", "")
+COS_ACCELERATE = os.getenv("COS_ACCELERATE", "true").lower() == "true"
+COS_PART_SIZE_MB = int(os.getenv("COS_PART_SIZE_MB", "16"))
+COS_SIGNED_URL_EXPIRE_SECONDS = int(os.getenv("COS_SIGNED_URL_EXPIRE_SECONDS", "1800"))
+COS_METADATA_BASE_URL = os.getenv(
+    "COS_METADATA_BASE_URL",
+    "http://metadata.tencentyun.com/latest/meta-data",
+).rstrip("/")
+
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 TASK_QUEUE_NAME = os.getenv("TASK_QUEUE_NAME", "analysis")
 RUN_TASKS_INLINE = os.getenv("RUN_TASKS_INLINE", "false").lower() == "true"
